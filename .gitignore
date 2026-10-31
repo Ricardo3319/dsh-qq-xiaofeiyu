@@ -1,0 +1,21 @@
+# 上游仓库的克隆 —— 不是我们的代码，而且各自带着自己的 .git
+/dsh-qq-bridge/
+/dsh-feiyu-mood/
+/dsh-fish-memory/
+/dsh-speak-up/
+/dsh-tts-bridge/
+
+# 运维日志：里面有真实群号、QQ 号、群里发生的事，不进公开仓库
+/HANDOFF.md
+
+# 从群里收来的表情包（别人的图）。只保留自带的 24 张。
+/_stickers/收_*
+/_stickers/received/
+
+# 噪音
+node_modules/
+__pycache__/
+*.pyc
+*.bak
+*.tmp
+.DS_Store

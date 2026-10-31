@@ -1,0 +1,518 @@
+<title>群聊记忆与风格调研</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 版式：单栏技术备忘，左侧一条细rule当索引，表格横向可滚 */
+:root {
+  --bg: #fbfcfd;
+  --bg-raised: #f2f5f7;
+  --fg: #16232b;
+  --fg-muted: #5a6b75;
+  --rule: #d8e0e5;
+  --accent: #0d6b7d;
+  --accent-soft: #e3f0f3;
+  --warn: #8a5a12;
+  --warn-soft: #fbf1de;
+  --good: #2b6b43;
+  --good-soft: #e6f1ea;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --serif: "Noto Serif SC", Georgia, "Songti SC", serif;
+  --sans: "Noto Sans SC", -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161a;
+    --bg-raised: #172127;
+    --fg: #dde6ea;
+    --fg-muted: #8fa3ad;
+    --rule: #2a3a43;
+    --accent: #5fbccb;
+    --accent-soft: #12333b;
+    --warn: #d9a54f;
+    --warn-soft: #342a16;
+    --good: #6fbf90;
+    --good-soft: #162c20;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161a;
+  --bg-raised: #172127;
+  --fg: #dde6ea;
+  --fg-muted: #8fa3ad;
+  --rule: #2a3a43;
+  --accent: #5fbccb;
+  --accent-soft: #12333b;
+  --warn: #d9a54f;
+  --warn-soft: #342a16;
+  --good: #6fbf90;
+  --good-soft: #162c20;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.72;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 74ch;
+  margin-inline: auto;
+  padding-block: clamp(32px, 6vw, 64px) 72px;
+}
+
+/* 页头 */
+header.head { border-bottom: 2px solid var(--fg); padding-bottom: 20px; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(27px, 5.2vw, 40px);
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+.dek {
+  font-size: 16.5px;
+  color: var(--fg-muted);
+  margin: 0;
+  max-width: 60ch;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+
+/* 各节 */
+section { margin-top: 48px; }
+h2 {
+  font-family: var(--serif);
+  font-size: clamp(20px, 3vw, 25px);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 16px;
+  text-wrap: balance;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+h2 .num {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  flex: none;
+  padding-top: 6px;
+}
+h3 {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 30px 0 10px;
+}
+p { margin: 0 0 14px; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+strong { font-weight: 700; }
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--bg-raised);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+}
+ul, ol { margin: 0 0 16px; padding-left: 22px; }
+li { margin-bottom: 7px; }
+li::marker { color: var(--accent); }
+
+/* 结论条 */
+.verdict {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 18px 20px;
+  margin: 28px 0 0;
+  border-radius: 0 4px 4px 0;
+}
+.verdict p:last-child { margin-bottom: 0; }
+.verdict .lead {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+/* 表格 */
+.tablewrap {
+  overflow-x: auto;
+  margin: 18px 0 22px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--bg-raised);
+}
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+th {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--bg);
+}
+tbody tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; }
+
+/* 标签 */
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.tag.no { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.tag.yes { background: var(--good-soft); color: var(--good); border-color: var(--good); }
+.tag.mid { background: var(--bg); color: var(--fg-muted); border-color: var(--rule); }
+
+/* 警告块 */
+.callout {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  padding: 16px 18px;
+  border-radius: 0 4px 4px 0;
+  margin: 20px 0;
+}
+.callout p:last-child { margin-bottom: 0; }
+.callout .h {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: var(--warn);
+}
+
+/* 路线 */
+.steps { list-style: none; padding: 0; margin: 18px 0 0; }
+.steps li {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid var(--rule);
+  margin: 0;
+}
+.steps li:first-child { border-top: 2px solid var(--fg); }
+.steps .n {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  padding-top: 3px;
+}
+.steps .t { font-weight: 700; margin-bottom: 5px; }
+.steps .d { color: var(--fg-muted); font-size: 14.5px; }
+
+footer {
+  margin-top: 56px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+
+@media (max-width: 480px) {
+  body { font-size: 15.5px; }
+  h2 { display: block; }
+  h2 .num { display: block; padding-top: 0; margin-bottom: 4px; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="head">
+  <p class="eyebrow">技术调研 · 2026-10-28</p>
+  <h1>群聊里的记忆、风格与表情包</h1>
+  <p class="dek">给「小肥鱼」加学习系统和记忆系统之前，先看清楚这个领域里谁已经做过了、做到什么程度，以及哪些做法会反过来伤害人格。</p>
+  <div class="meta">
+    <span>调研对象：DSH 生态 + AstrBot 生态</span>
+    <span>本轮不改代码</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <p class="lead">一句话结论</p>
+  <p>你要的两件事，<strong>DSH 生态里没有现成方案</strong>；<strong>AstrBot 生态里有成熟实现，但不能直接装过来</strong>。风格学习不建议做成「自动学群友」——已经有人认真做过，并且自己关掉了。<strong>记忆是地基，先做它。</strong></p>
+</div>
+
+<section>
+  <h2><span class="num">01</span>你要的两件事，各自什么情况</h2>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>需求</th><th>DSH 生态</th><th>别处有没有成熟实现</th><th>判断</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>记忆系统</td>
+          <td><span class="tag no">部分</span> 本机已装 <code>dsh-fish-memory</code>，但只按会话记，不分「谁说的」</td>
+          <td><span class="tag yes">成熟</span> LivingMemory、qq-agent-plus</td>
+          <td>扩展现有的，不必重写</td>
+        </tr>
+        <tr>
+          <td>表情包收藏</td>
+          <td><span class="tag no">没有</span> 一个都没有</td>
+          <td><span class="tag yes">成熟</span> stealer、smart_imagechat_hub</td>
+          <td>照思路自己做，别照搬视觉分类</td>
+        </tr>
+        <tr>
+          <td>学群友说话风格</td>
+          <td><span class="tag no">没有</span></td>
+          <td><span class="tag mid">做过的都关掉了</span></td>
+          <td>改成离线提炼 + 人工审核</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>先说清楚一件事：<strong>AstrBot 和 DSH 是两个框架</strong>，插件不通用。AstrBot 那些插件值得读、值得抄思路，但代码搬不过来。反过来也一样。</p>
+</section>
+
+<section>
+  <h2><span class="num">02</span>值得抄的三个实现</h2>
+
+  <h3>qq-agent-plus —— 思路最接近，值得逐条读</h3>
+  <p>Node.js + <code>node:sqlite</code> + systemd，单进程。两处设计特别值得借：</p>
+  <ul>
+    <li><strong>贴纸轮换进提示词</strong>：把「常用」和「一直没用上」的表情轮换着写进系统提示，条数可调。比一次性列几十个文件名聪明——不会让模型每次都挑那几个。</li>
+    <li><strong>FTS5 + 中文二字切分</strong>做记忆检索。每人默认最多 50 条，手写条目不删、默认不过期。这比向量库轻太多，本地跑完全够。</li>
+  </ul>
+  <p>它明确写了「<strong>不依赖 DSH</strong>」，是独立框架。但它的 <code>memory/</code> 目录结构和 SQLite 表设计，是我们最该抄的部分。</p>
+  <p><a href="https://github.com/sakurawwwxh/qq-agent-plus">github.com/sakurawwwxh/qq-agent-plus</a></p>
+
+  <h3>astrbot_plugin_stealer —— 表情包收藏的完整形态</h3>
+  <p>这是这个领域做得最完整的一个：</p>
+  <ul>
+    <li>监听群聊图片 → <strong>用视觉模型做语义/情绪分类</strong> → 入库</li>
+    <li>有<strong>待审核池</strong>（自动进来的先不直接用，等你过一遍）</li>
+    <li><strong>GIF 分镜</strong>处理（动图取关键帧判断情绪）</li>
+    <li>按概率、冷却、群黑白名单发送</li>
+    <li>暴露 <code>search_meme</code> / <code>send_meme</code> / <code>steal_meme</code> 三个 LLM 工具</li>
+  </ul>
+  <p><a href="https://github.com/nagatoquin33/astrbot_plugin_stealer">github.com/nagatoquin33/astrbot_plugin_stealer</a></p>
+
+  <div class="callout">
+    <p class="h">但视觉分类这一步，我建议不要照抄</p>
+    <p>每收一张图就调一次视觉模型，成本按图算，而且<strong>分类质量不稳定</strong>——同一张「无语」的图，它可能这次判成「嫌弃」、下次判成「震惊」。</p>
+    <p>你现在的做法反而更好：<strong>24 张按情绪命名的贴纸</strong>（<code>shengqi.jpg</code> 生气、<code>xianqi.jpg</code> 嫌弃），名字就是标签。零成本、零误判、可预测。</p>
+    <p>收藏功能该做的是<strong>扩充这个命名库</strong>，而不是引入自动分类。</p>
+  </div>
+
+  <h3>LivingMemory —— 长期记忆的另一种权衡</h3>
+  <p>向量 + 图谱检索，带 TTL 衰减。最大的特点是 <code>enable_full_group_capture</code>：<strong>抓没 @ 它的群聊上下文</strong>。这跟我们已经做的「群里听所有人」是同一件事，说明这个方向是对的。</p>
+  <p>但向量库对我们来说太重了。<code>dsh-fish-memory</code> 已经有一套「鲜活度 + 证据检索」，够用。</p>
+  <p><a href="https://lxfight-s-astrbot-plugins.github.io/astrbot_plugin_livingmemory/">lxfight-s-astrbot-plugins.github.io/astrbot_plugin_livingmemory</a></p>
+</section>
+
+<section>
+  <h2><span class="num">03</span>风格学习：为什么建议不做「自动学」</h2>
+
+  <p>这个领域的主流做法分两层，差别很大：</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>做法</th><th>代表项目</th><th>代价</th><th>稳定性</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>人格卡 + 读空气</td>
+          <td>personagent、MaiBot、ChatLuna 伪装群友</td>
+          <td>靠人手写，不学新东西</td>
+          <td><span class="tag yes">稳定</span></td>
+        </tr>
+        <tr>
+          <td>离线抽「声音指纹」</td>
+          <td>me.skill、Ta.Skill</td>
+          <td>要定期人工跑一次、人工审</td>
+          <td><span class="tag yes">可控</span></td>
+        </tr>
+        <tr>
+          <td>聊天记录微调 LoRA</td>
+          <td>Chat-Style-Bot、WeClone</td>
+          <td>要训练、要显卡、要数据</td>
+          <td><span class="tag mid">高保真但重</span></td>
+        </tr>
+        <tr>
+          <td>在线自动学群友</td>
+          <td>qq-agent-plus 曾做过</td>
+          <td><strong>已停用</strong></td>
+          <td><span class="tag no">被作者放弃</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <p class="h">最值得注意的一条证据</p>
+    <p><code>qq-agent-plus</code> 曾经做过「黑话研究流水线」——从群聊里学黑话、学语气。作者后来说得很干脆：<strong>流水线已停用且不能再开，相关库不再创建，提示词也不再塞黑话。</strong></p>
+    <p>一个认真做过这件事的项目，最后把它关掉了。原因是明摆着的：群里来个人说几句脏话，它跟着学；来个人刷黑话，它也学。<strong>人格会漂、会退化</strong>——而你现在这套「可爱傲娇小鲸鱼」是逐字调出来的。</p>
+  </div>
+
+  <p>所以风格这件事，正确形态是<strong>离线 + 审核 + 可回滚</strong>：</p>
+  <ol>
+    <li>定期（比如每周）跑一次，让它读这个群最近的对话</li>
+    <li>产出一份<strong>候选清单</strong>：常出现的群梗、口头禅、说话节奏</li>
+    <li>你看过，决定要不要进人设。不要就扔掉</li>
+    <li>进人设的部分单独成段，随时能删</li>
+  </ol>
+  <p>这跟「在线自动学」是两回事：一个是<strong>你决定它学什么</strong>，一个是<strong>群友决定它学什么</strong>。</p>
+</section>
+
+<section>
+  <h2><span class="num">04</span>本机已经装着什么</h2>
+
+  <p>有两个相关插件你可能没意识到已经在跑：</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>插件</th><th>已经有的能力</th><th>缺口</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>dsh-fish-memory<br><span style="font-weight:400;color:var(--fg-muted);font-size:13px">鱼的记忆</span></td>
+          <td>
+            会淡忘（半衰期 30 天）<br>
+            自动挑重点，每天有配额<br>
+            按证据检索，按鲜活度/重要度/情绪排序<br>
+            「长期事实」不过期，每轮固定带前几条<br>
+            有 <code>remember</code> 工具
+          </td>
+          <td><strong>不分「谁说的」</strong>。群友的偏好、群梗都没沉淀下来</td>
+        </tr>
+        <tr>
+          <td>dsh-feiyu-mood<br><span style="font-weight:400;color:var(--fg-muted);font-size:13px">鱼的心情</span></td>
+          <td>
+            每轮用模型判心情涨跌 + 七根情绪<br>
+            写进 <code>systemPrompt.context</code> 单独一段<br>
+            <strong>不破坏前缀缓存</strong>，聊多久都不会因此多花钱
+          </td>
+          <td>跟「说话频率」还没打通</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><code>dsh-feiyu-mood</code> 有一个设计值得单独说：它把心情走 <code>systemPrompt.context</code> 而不是改系统提示本身，所以<strong>不会破坏 DSH 的前缀缓存</strong>。这个模式后面做「风格片段」「群梗」时应该照用。</p>
+</section>
+
+<section>
+  <h2><span class="num">05</span>其它候选，以及在 DSH 里的对应</h2>
+
+  <p><code>awesome-dsh-plugin</code> 那份清单几百个插件，我筛出了跟群聊机器人真正相关的：</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>插件</th><th>用途</th><th>判断</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>dsh-im-companion</td><td>按 Agent 归组飞书/微信/QQ 机器人并标会话状态</td><td><span class="tag mid">你已直连 QQ，用处不大</span></td></tr>
+        <tr><td>dsh-agent-group-panel</td><td>飞书多智能体启停与状态台</td><td><span class="tag no">飞书专用</span></td></tr>
+        <tr><td>dsh-copree</td><td>把可互聊的 AI 群组嵌进侧栏</td><td><span class="tag no">不是 QQ</span></td></tr>
+        <tr><td>dsh-office</td><td>办公看板，飞书消息需另装 CLI</td><td><span class="tag no">无关</span></td></tr>
+        <tr><td>dsh-engram</td><td>跨会话长期记忆与检索</td><td><span class="tag no">跟 fish-memory 重复</span></td></tr>
+        <tr><td>dsh-memory</td><td>白盒元认知、持续学习、世界模型试验</td><td><span class="tag mid">偏实验，不建议</span></td></tr>
+        <tr><td>dsh-heartbeat</td><td>定时自行醒来、整理兴趣、择机留言</td><td><span class="tag no">跟 speak-up 重复，且仅 Windows</span></td></tr>
+        <tr><td>dsh-sleep-send</td><td>定时发送</td><td><span class="tag yes">可选</span> 配合主动搭话</td></tr>
+        <tr><td>dsh-soul</td><td>人设写入系统提示</td><td><span class="tag mid">我们已用 agent preset 做</span></td></tr>
+        <tr><td>dsh-weather / dsh-gacha-calendar / dsh-stock-ticker</td><td>天气 / 抽卡日程 / 行情条</td><td><span class="tag yes">可当谈资</span> 看你要不要</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>清单里绝大多数是界面增强（侧栏、主题、桌宠、时间线之类），跟群聊无关，不用看。</p>
+</section>
+
+<section>
+  <h2><span class="num">06</span>建议路线</h2>
+
+  <p>顺序有讲究：<strong>记忆是地基，风格是在记忆上面长出来的。</strong>先做风格，它没有素材可用。</p>
+
+  <ol class="steps">
+    <li>
+      <span class="n">01</span>
+      <div>
+        <div class="t">记住「谁是谁」</div>
+        <div class="d">给 fish-memory 加一层群友画像：QQ 号 → 昵称 / 别名 / 口头禅 / 爱好 / 跟群里谁熟。qq-agent-plus 的 <code>memory/</code> 结构可以照抄。这一步做完，后面所有东西才有地基。</div>
+      </div>
+    </li>
+    <li>
+      <span class="n">02</span>
+      <div>
+        <div class="t">表情包收藏，但按你的方式</div>
+        <div class="d">不要视觉模型自动分类（贵、不准）。改成：群里有人发图 → 入库待选 → 你（或它自己按名字）给个情绪标签 → 进 <code>_stickers/</code>。你现有 24 张的命名方式就是正确形态，要做的是让它能自己扩充。</div>
+      </div>
+    </li>
+    <li>
+      <span class="n">03</span>
+      <div>
+        <div class="t">风格：离线提炼，你审核</div>
+        <div class="d">每周跑一次，总结这个群最近在说什么、有什么梗，产出候选清单。你看过决定要不要进人设。走 <code>systemPrompt.context</code>（照 feiyu-mood 的做法），不破坏前缀缓存，随时能撤。</div>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="num">07</span>参考链接</h2>
+  <ul>
+    <li><a href="https://github.com/sakurawwwxh/qq-agent-plus">qq-agent-plus</a> — 贴纸轮换进提示词、FTS5 记忆，思路最接近</li>
+    <li><a href="https://github.com/nagatoquin33/astrbot_plugin_stealer">astrbot_plugin_stealer</a> — 表情包收藏的完整形态</li>
+    <li><a href="https://lxfight-s-astrbot-plugins.github.io/astrbot_plugin_livingmemory/">LivingMemory</a> — 向量 + 图谱检索、TTL 衰减、全群捕获</li>
+    <li><a href="https://github.com/JREion/astrbot_plugin_smart_imagechat_hub">smart_imagechat_hub</a> — 群聊偷图 + 智能斗图</li>
+    <li><a href="https://github.com/whyever77/dafeiyu-astrbot">dafeiyu-astrbot</a> — AstrBot + NapCat 的完整组合示范</li>
+    <li><a href="https://github.com/Chain-Mao/Chat-Style-Bot">Chat-Style-Bot</a> — 聊天记录 LoRA 微调模仿某个人</li>
+    <li><a href="https://github.com/Wholiver/Ta.Skill">Ta.Skill</a> — 不训练，抽「声音指纹」生成人格片段</li>
+    <li><a href="https://github.com/Yuuyuko-uu/awesome-dsh-plugin">awesome-dsh-plugin</a> — DSH 插件总清单</li>
+  </ul>
+</section>
+
+<footer>
+  调研于 2026-10-28 · 结论基于各项目当前 README 与仓库状态 · 未验证的功能已在文中标注
+</footer>
+
+</div>

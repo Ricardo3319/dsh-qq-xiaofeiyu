@@ -1,0 +1,370 @@
+<title>DSH 的 QQ 插件地图</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* ── 设计计划 ────────────────────────────────────────────────
+   主题：小肥鱼的选型台。读者是一个人，要在一堆插件里挑能装的。
+   色：深海青做主色（鲸鱼 + QQ 蓝之间），冷灰底，语义色单独一套（能共存 / 互斥）。
+   字：Noto Serif SC 做标题（有骨头，不像默认黑体），Noto Sans SC 正文，
+       JetBrains Mono 给仓库地址和安装命令 —— 这些东西要能一眼认出是「要抄的」。
+   布局：顶部一条固定筛选带（分类 + 搜索），下面按类分组的长列表。
+       每条一行：名字 · 作者 · 标签 · 一句话 · 安装命令。
+   ─────────────────────────────────────────────────────────── */
+:root{
+  --bg:#f4f7f9; --surface:#ffffff; --surface-2:#eaf0f4;
+  --fg:#0e1f2a; --muted:#5c7284; --line:#d8e2e9;
+  --accent:#0d7280; --accent-soft:#d9eef1;
+  --ok:#156b45; --ok-soft:#dff0e7;
+  --warn:#96530a; --warn-soft:#fbeadb;
+  --mono-fg:#123542;
+  --shadow:0 1px 2px rgba(14,31,42,.06), 0 8px 24px -16px rgba(14,31,42,.28);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0a141b; --surface:#111d25; --surface-2:#16242e;
+    --fg:#e4eef4; --muted:#8ba2b2; --line:#22323d;
+    --accent:#4cc0d2; --accent-soft:#123039;
+    --ok:#5cc08d; --ok-soft:#122c22;
+    --warn:#e0a05a; --warn-soft:#2e2113;
+    --mono-fg:#a9dbe6;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0a141b; --surface:#111d25; --surface-2:#16242e;
+  --fg:#e4eef4; --muted:#8ba2b2; --line:#22323d;
+  --accent:#4cc0d2; --accent-soft:#123039;
+  --ok:#5cc08d; --ok-soft:#122c22;
+  --warn:#e0a05a; --warn-soft:#2e2113;
+  --mono-fg:#a9dbe6;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font-family:"Noto Sans SC",-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  font-size:15px; line-height:1.62;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0 4rem;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:62rem;margin-inline:auto}
+h1,h2,h3{font-family:"Noto Serif SC",Georgia,serif;text-wrap:balance;line-height:1.25;margin:0}
+a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:2px}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+header.top{
+  padding-block:2.4rem 1.4rem;
+  border-bottom:1px solid var(--line);
+}
+.eyebrow{
+  font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin-bottom:.6rem;
+}
+h1{font-size:clamp(1.7rem,4.6vw,2.5rem);letter-spacing:-.01em}
+.lede{color:var(--muted);margin:.9rem 0 0;max-width:44rem}
+.lede strong{color:var(--fg);font-weight:500}
+
+/* 现状卡 */
+.now{
+  margin-top:1.6rem;background:var(--surface);border:1px solid var(--line);
+  border-radius:12px;box-shadow:var(--shadow);overflow:hidden;
+}
+.now-h{
+  padding:.7rem 1rem;background:var(--accent-soft);color:var(--accent);
+  font-weight:700;font-size:.82rem;letter-spacing:.06em;
+}
+.now-b{padding:1rem 1rem 1.1rem;display:grid;gap:.85rem}
+.now-row{display:flex;gap:.7rem;flex-wrap:wrap;align-items:baseline;font-size:.92rem}
+.now-row .k{color:var(--muted);min-width:5.5rem}
+.now-row .v{font-family:"JetBrains Mono",monospace;font-size:.84rem;color:var(--mono-fg);overflow-wrap:anywhere;min-width:0}
+.warnbox{
+  border-left:3px solid var(--warn);background:var(--warn-soft);
+  padding:.8rem .95rem;border-radius:0 8px 8px 0;font-size:.9rem;color:var(--fg);
+}
+.warnbox b{color:var(--warn)}
+
+/* 筛选带 */
+.bar{
+  position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+  padding-block:.7rem;margin-bottom:1.5rem;
+}
+body::before{
+  content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);
+  z-index:10;background:var(--bg);
+}
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+.chip{
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  border-radius:999px;padding:.32rem .8rem;font-size:.83rem;cursor:pointer;
+  font-family:inherit;line-height:1.4;transition:background .12s,color .12s,border-color .12s;
+}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+:root[data-theme="dark"] .chip[aria-pressed="true"],
+:root:not([data-theme="light"]) .chip[aria-pressed="true"]{color:#06222a}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .chip[aria-pressed="true"]{color:#fff}}
+#q{
+  flex:1 1 12rem;min-width:0;
+  border:1px solid var(--line);background:var(--surface);color:var(--fg);
+  border-radius:999px;padding:.36rem .9rem;font-size:.86rem;font-family:inherit;
+}
+#q:focus-visible,.chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.count{color:var(--muted);font-size:.8rem;margin-left:auto;font-variant-numeric:tabular-nums}
+
+/* 分组 */
+section.cat{margin-block:2.2rem}
+.cat-h{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap;margin-bottom:.35rem}
+.cat-h h2{font-size:1.18rem}
+.cat-count{color:var(--muted);font-size:.8rem;font-variant-numeric:tabular-nums}
+.cat-note{color:var(--muted);font-size:.88rem;margin:0 0 1rem;max-width:44rem}
+
+/* 条目 */
+ul.list{list-style:none;margin:0;padding:0;display:grid;gap:.6rem}
+li.item{
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  padding:.85rem .95rem;display:grid;gap:.45rem;min-width:0;
+}
+li.item[hidden]{display:none}
+.item-top{display:flex;gap:.55rem 0.7rem;flex-wrap:wrap;align-items:baseline;min-width:0}
+.name{font-weight:700;font-size:.97rem;overflow-wrap:anywhere;min-width:0}
+.who{color:var(--muted);font-size:.8rem;font-family:"JetBrains Mono",monospace;overflow-wrap:anywhere}
+.tags{display:flex;gap:.3rem;flex-wrap:wrap;margin-left:auto}
+.tag{
+  font-size:.72rem;border-radius:5px;padding:.1rem .42rem;white-space:nowrap;
+  border:1px solid var(--line);color:var(--muted);background:var(--surface-2);
+}
+.tag.good{color:var(--ok);background:var(--ok-soft);border-color:transparent}
+.tag.bad{color:var(--warn);background:var(--warn-soft);border-color:transparent}
+.tag.acc{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.desc{margin:0;font-size:.9rem;color:var(--fg);overflow-wrap:anywhere}
+.desc .note{color:var(--muted)}
+.cmd{
+  display:flex;align-items:center;gap:.5rem;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:7px;
+  padding:.35rem .5rem .35rem .6rem;font-family:"JetBrains Mono",monospace;
+  font-size:.79rem;color:var(--mono-fg);min-width:0;
+}
+.cmd span{overflow-x:auto;white-space:nowrap;min-width:0;flex:1}
+.cmd button{
+  flex:none;font-family:inherit;font-size:.72rem;cursor:pointer;
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  border-radius:5px;padding:.15rem .45rem;
+}
+.cmd button:hover{color:var(--accent);border-color:var(--accent)}
+.empty{padding:3rem 0;text-align:center;color:var(--muted)}
+footer{margin-top:3.5rem;padding-top:1.2rem;border-top:1px solid var(--line);color:var(--muted);font-size:.83rem}
+footer p{margin:.35rem 0}
+@media (max-width:30rem){
+  .tags{margin-left:0;width:100%}
+  body{font-size:14.5px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">DeepSeek Harness × QQ</div>
+  <h1>DSH 的 QQ 插件地图</h1>
+  <p class="lede">从社区两大 awesome 清单（7726 条）和开放插件市场（952 条）里挑出来的 QQ 相关插件，共 <strong>58 条</strong>。按<strong>能不能跟你现在这套并存</strong>分开 —— 因为绝大多数是完整替代品，不是补丁。</p>
+
+  <div class="now">
+    <div class="now-h">你现在跑着的是这一套</div>
+    <div class="now-b">
+      <div class="now-row"><span class="k">QQ 号</span><span class="v">小肥鱼（一个专门的小号，号见部署配置）</span></div>
+      <div class="now-row"><span class="k">桥</span><span class="v">Yuuyuko-uu/dsh-qq-bridge（本地副本 1.4.2 + 30 处本地补丁）</span></div>
+      <div class="now-row"><span class="k">协议端</span><span class="v">NapCat → 127.0.0.1:3000（OneBot 11 HTTP）</span></div>
+      <div class="now-row"><span class="k">周边</span><span class="v">dsh-feiyu-mood · dsh-fish-memory · dsh-speak-up · dsh-tts-bridge</span></div>
+      <div class="now-row"><span class="k">自己写的</span><span class="v">群友簿 · 表情库 · 节奏热度 · 引用回复 · 贴表情 · 撤回 · 戳回去 · 点赞</span></div>
+      <div class="warnbox"><b>别把两个桥装在一起。</b>每个桥都自己去轮询 NapCat 的消息历史、各记各的水位、各自监听 assistant 消息 —— 装两个的结果是同一条消息被投进 DSH 两遍、一句话被发到群里两遍，不是功能变多。反向 WebSocket 的桥还会跟 NapCat 现在的 httpClients 抢连接。</div>
+    </div>
+  </div>
+</header>
+
+<div class="bar">
+  <div class="chips">
+    <button class="chip" data-cat="all" aria-pressed="true">全部</button>
+    <button class="chip" data-cat="bridge" aria-pressed="false">完整桥 · 互斥</button>
+    <button class="chip" data-cat="addon" aria-pressed="false">增强件 · 可共存</button>
+    <button class="chip" data-cat="official" aria-pressed="false">官方 Bot 通道</button>
+    <button class="chip" data-cat="im" aria-pressed="false">泛 IM 网关</button>
+    <input id="q" type="search" placeholder="搜名字 / 作者 / 能力…" autocomplete="off">
+    <span class="count" id="count"></span>
+  </div>
+</div>
+
+<main id="list"></main>
+
+<footer>
+  <p>数据来自 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin">awesome-dsh-plugin</a>、<a href="https://github.com/cccakeee/awesome-dsh-plugins">cccakeee/awesome-dsh-plugins</a>、<a href="https://github.com/ZeroPointRepo/awesome-dsh-plugins">ZeroPointRepo/awesome-dsh-plugins</a> 和 <a href="https://dshopen.org/zh/">dshopen.org 开放插件市场</a> 的索引，整理于 2026-10-30。</p>
+  <p>「维护中」那一列：只有标了版本号的是我去 npm 上查过发布日期的，其余写「未核实」—— 别把没核实的当结论。</p>
+  <p>这些插件都能碰到你的 QQ 账号和 DSH 宿主，装之前自己看一眼代码或至少看一眼它要什么权限。</p>
+</footer>
+</div>
+
+<script>
+const P = [
+  // ── 完整桥 ──────────────────────────────────────────────
+  {c:'bridge',n:'Yuuyuko-uu/dsh-qq-bridge',r:'github.com/Yuuyuko-uu/dsh-qq-bridge',d:'你在用的这个。绑「DSH 会话 ↔ QQ 聊天」，轮询 NapCat HTTP，收图发图、群聊节奏、回复门槛、人设预设。我们合并到了 1.4.2 并打了 30 处本地补丁。',t:[['acc','正在用'],['good','1.4.2']]},
+  {c:'bridge',n:'dsh-qq（2710586329）',r:'github.com/2710586329/dsh-qq',cmd:'dsh plugin --profile web add dsh-qq-onebot',d:'能力最全的一个：十个 QQ 工具（戳一戳 / 贴表情 / 点赞 / 发图 / 发文件 / QQ 表情 / 商城表情 / 引用回复 / 发消息 / 撤回），私聊和群各自独立持久会话，本地 Vosk 语音转文字。我们那几个工具就是照它做的。',t:[['good','npm 1.2.8 · 10-30']]},
+  {c:'bridge',n:'mario841859784/dsh-onebot',r:'github.com/mario841859784/dsh-onebot',cmd:'dsh plugin --profile web add dsh-onebot-qq',d:'强在表达：中间消息超时自动撤回、主动发合并转发、whisper 语音转写、长文本渲染成文字图、一大堆策略开关（requireMention / dmPolicy / rateLimit）。',t:[['good','npm 0.9.6 · 10-24']]},
+  {c:'bridge',n:'sj244/dsh-qq-bridge',r:'github.com/sj244/dsh-qq-bridge',d:'不新开会话，直接绑一个已有的 DSH 会话。fail-closed 白名单 + @/昵称/概率唤醒。作者自己注明：主动戳人不可用（NapCat 的 send_poke 依赖 PacketBackend，很多 QQ 版本回 retcode 1400）—— 我们这边实测是通的，所以这条取决于你的 QQ 版本。',t:[['bad','戳人可能不行']]},
+  {c:'bridge',n:'cheesehaqi/dsh-qq-onebot-bridge',r:'github.com/cheesehaqi/dsh-qq-onebot-bridge',d:'反向 WebSocket 接入。@ 和引用会带语音转写，私聊能看图和动图表情，带 face 和贴纸工具。',t:[['bad','抢 WS 连接']]},
+  {c:'bridge',n:'cheems135/dsh-qq-bridge',r:'github.com/cheems135/dsh-qq-bridge',d:'人设预设 + 自定义人设、分组贴纸库 + 网络搜图、edge-tts 语音条、可插拔查询引擎、定期记忆压缩、十一个标签页的管理面板和每轮成本统计。',t:[]},
+  {c:'bridge',n:'Applepinea/dsh-qq-access',r:'github.com/Applepinea/dsh-qq-access',d:'自带 NapCat 管理（扫码登录）、图片理解、本地归档 + 轮询补投、群里 @ 和撤回自己的话、QQ 空间留言板工具、侧栏面板。默认任何私聊或 @ 都会得到回复 —— 装之前先设 allowlist。',t:[['bad','默认全开']]},
+  {c:'bridge',n:'accomplish07zrh-eng/dsh-aurabot-qq',r:'github.com/accomplish07zrh-eng/dsh-aurabot-qq',d:'把 agent 当成角色放进 QQ：私聊群聊、语音条、贴纸、空间日记、B 站浏览、翻唱、生图、长期记忆和心情，每个功能都是能单独关掉的模块。走 SnowLuma。',t:[]},
+  {c:'bridge',n:'3150481853/molly-qq-whale',r:'github.com/3150481853/molly-qq-whale',d:'固定人设 + 长期记忆，群聊私聊都答，能发贴纸和语音条，带本地网页控制台。',t:[]},
+  {c:'bridge',n:'tdcq9594/dsh-roost',r:'github.com/tdcq9594/dsh-roost',d:'一个 QQ 会话 = 一个能扛重启的 DSH 会话，按说话人区分。',t:[]},
+  {c:'bridge',n:'beiheng127/dsh-dfy-qq',r:'github.com/beiheng127/dsh-dfy-qq',d:'QQ 聊天行为层：每轮注入人设文件，一份按 QQ 号索引的 people 文件（跟我们的群友簿一个思路）。',t:[]},
+  {c:'bridge',n:'Cike-money/dsh-qq-bridge',r:'github.com/Cike-money/dsh-qq-bridge',d:'NapCat 接入，私聊和群都变成会话提示词，回复再发回 QQ。',t:[]},
+  {c:'bridge',n:'hzh5021/dsh-qq',r:'github.com/hzh5021/dsh-qq',d:'主人的私聊开一个会话，回复回 QQ，可远程操作。',t:[]},
+  {c:'bridge',n:'arrow1031-dev/dsh-qq-bot',r:'github.com/arrow1031-dev/dsh-qq-bot',cmd:'dsh plugin --profile web add @sputnikzaychik/dsh-qq-bot',d:'协议最多：OneBot 11/12、Satori、Milky、官方 QQ Bot 都能接，每个会话独立，带权限控制。',t:[['good','npm 在册']]},
+  {c:'bridge',n:'Funny1Potato/dsh-onebot-hub',r:'github.com/Funny1Potato/dsh-onebot-hub',d:'不是桥，是 OneBot 中枢：夹在上游协议端和下游 bot 之间原样转发事件，给 agent 一份按会话的时间线和操作账本。想同时跑多个下游时可以看看。',t:[]},
+  {c:'bridge',n:'drscrewdriver/dsh-im-union',r:'github.com/drscrewdriver/dsh-im-union',d:'自称「联合实现」：把几个社区同类插件的能力合到一起。',t:[]},
+  {c:'bridge',n:'w2018/dsh-qq-group-digest',r:'github.com/w2018/dsh-qq-group-digest',d:'盯着指定的几个 QQ 群，攒够条数就用模型总结一批，把每群报告私聊发给指定的人。跟桥不冲突（它只是读），但会跟桥抢同一份群历史。',t:[]},
+  {c:'bridge',n:'wodongx123/dsh-qq-notify',r:'github.com/wodongx123/dsh-qq-notify',d:'只做单向通知：通过本地 NapCat 发 QQ 私聊，带 qq_send / qq_status / qq_napcat 工具和一键部署脚本。',t:[]},
+  {c:'bridge',n:'xueyingneko/qqbridge-plus',r:'github.com/xueyingneko/qqbridge-plus',d:'qq-bridge 的扩展：在 QQ 里查 MaimaiDX 分数（渲染 B50 图）等等。',t:[]},
+  {c:'bridge',n:'master1Sun/dsh-QQbot',r:'github.com/master1Sun/dsh-QQbot',d:'一句简介，信息很少。',t:[['bad','信息不足']]},
+  {c:'bridge',n:'jixishi/dsh-adapter-qq',r:'github.com/jixishi/dsh-adapter-qq',d:'官方 Bot 的 C2C 单聊适配器，带交互按钮、工作区会话管理和实时 Web 面板。',t:[]},
+  {c:'bridge',n:'hzh5021/dsh-qq-voice',r:'github.com/hzh5021/dsh-qq-voice',d:'只干一件事：把「按频道说话的规矩」文件挂进 QQ 预设的系统提示词，让某个频道只回一两行，别的频道不动。跟我们改人设的路子一样。',t:[['good','可共存']]},
+
+  // ── 增强件 ──────────────────────────────────────────────
+  {c:'addon',n:'yyh-001/dsh-meme',r:'github.com/yyh-001/dsh-meme',cmd:'dsh plugin --profile web add dsh-meme',d:'表情包全套：纯文字也能发、按情绪自动发、QQ/微信风格的选择器、自动学习、自定义包。跟我们的表情库功能重叠 —— 值得看的是它的「自动学习」怎么做的。',t:[['good','npm 0.1.71 · 10-29'],['good','可共存']]},
+  {c:'addon',n:'dsh-stickers',r:'dshopen.org（开放市场）',d:'按情绪和素材组挑表情包，带预览。需要自备素材库和索引。',t:[['good','可共存']]},
+  {c:'addon',n:'zxmqq1234/dsh-auto-retry',r:'github.com/zxmqq1234/dsh-auto-retry',d:'给请求加补充重试、轮次自动续跑、无响应看门狗，配倒计时横幅和用量看板。<b>这个对你有用</b> —— 今天傍晚那 12 轮 403 就是模型请求失败后没人重试。',t:[['good','对症'],['good','可共存']]},
+  {c:'addon',n:'waning-sun/dsh-napcat-keeper',r:'github.com/waning-sun/dsh-napcat-keeper',d:'保活 NapCat：探测 OneBot HTTP 端口，不答就拉起来，每 45 秒复查，杀重复进程链，带状态和重启工具。<b>仅 Windows</b> —— 你这边已经用 systemd 的 napcat.service 做了同一件事。',t:[['bad','Windows only']]},
+  {c:'addon',n:'nineoooo/dsh-qzone-echo',r:'github.com/nineoooo/dsh-qzone-echo',d:'把你自己发过的 QQ 空间说说归档到本地，自动分「想法 / 梦 / 书影评」三栏，带能加密码的本地网页查看器。',t:[['good','可共存']]},
+  {c:'addon',n:'beiyege-01/dsh-voice-ai-girlfriend-plugin',r:'github.com/beiyege-01/dsh-voice-ai-girlfriend-plugin',d:'语音全套：FunASR 麦克风输入、Qwen3-TTS 朗读回复、陪伴动画窗，外加通过 NapCat 的双向 QQ（文字 / 语音 / 图片推送）。',t:[]},
+  {c:'addon',n:'flhy666/dsh-chatting-pet',r:'github.com/flhy666/dsh-chatting-pet',d:'桌宠：语音聊天、人设、记忆、B 站、QQ 上下文，带命令门控的电脑控制。',t:[]},
+  {c:'addon',n:'lintwosix-beep/dsh-pet-chat',r:'github.com/lintwosix-beep/dsh-pet-chat',d:'带聊天面板的桌宠：QQ 风格的历史记录、收藏、能合并回主记录的分支对话。',t:[]},
+  {c:'addon',n:'vlln/whale-girl',r:'github.com/vlln/whale-girl',d:'QQ 宠物风格的桌宠：角落浮动、可拖动、能喂能玩。跟小肥鱼形象撞了，纯装饰。',t:[]},
+  {c:'addon',n:'Kevinwu901113/dsh-dot',r:'github.com/Kevinwu901113/dsh-dot',d:'给角色一台自己的安卓手机：插件会在本机装并运行一个 Android 环境，她有自己独立的 QQ、记忆。',t:[]},
+  {c:'addon',n:'Echo-Cry/dsh-intel-pulse',r:'github.com/Echo-Cry/dsh-intel-pulse',d:'无人时或按计划自动做新闻简报、动漫图库打标，能在 QQ 里搜。仅 Windows。',t:[['bad','Windows only']]},
+
+  // ── 官方 Bot 通道 ────────────────────────────────────────
+  {c:'official',n:'tencent-connect/dsh-qqbot',r:'github.com/tencent-connect/dsh-qqbot',d:'腾讯官方的连接器，走 QQ 开放平台（q.qq.com）。<b>跟 NapCat 是两条完全不同的路</b>：需要去开放平台注册机器人、拿正式凭证，不能拿你个人的 QQ 号当机器人。',t:[['acc','需开放平台账号']]},
+  {c:'official',n:'zaofan-make/dsh-qqbot',r:'github.com/zaofan-make/dsh-qqbot',d:'官方通道的功能加强分支：群聊私聊、更多消息类型。',t:[['acc','官方平台']]},
+  {c:'official',n:'wuwo1979/dsh-qqbot-muu',r:'github.com/wuwo1979/dsh-qqbot-muu',d:'上面那个的扩展包（要先装它，锁 1.10.39）：两层 SQLite 记忆、会学习的人设、人设漂移守卫、群分级、本地模型快答、TTS 发件箱、贴纸库、审批制视频工坊。',t:[['acc','官方平台'],['bad','依赖锁定']]},
+  {c:'official',n:'cheesewoo/dsh-qqbot-dafeiyu',r:'github.com/cheesewoo/dsh-qqbot-dafeiyu',d:'官方 Bot 接 DSH，按对端分会话、群内 @ 和关键词触发、生图和语音回复。<b>访问默认 OPEN，空白名单=所有人</b>，暴露前必须先改。',t:[['bad','默认全开']]},
+  {c:'official',n:'Jiangsubei/dsh-qqbot-bridge',r:'github.com/Jiangsubei/dsh-qqbot-bridge',d:'用官方 Bot API v2 远程操作 DSH 的会话和工作区，仅单聊。',t:[['acc','官方平台']]},
+  {c:'official',n:'yjrqz777/dsh-qqbot-lite',r:'github.com/yjrqz777/dsh-qqbot-lite',d:'官方 Bot 接 DSH 桌面版，按聊天设人设、交互式提问。',t:[['acc','官方平台']]},
+  {c:'official',n:'tbb051122/dsh-plugin-qq-bridge',r:'github.com/tbb051122/dsh-plugin-qq-bridge',d:'官方 Bot 在进程内开或恢复一个真的 DSH 会话，带工作区和 OpenID 白名单。',t:[['acc','官方平台']]},
+  {c:'official',n:'988hj7tczd-oss/dsh-im-qq',r:'github.com/988hj7tczd-oss/dsh-im-qq',d:'官方 Bot 集成：WebSocket 长连接（心跳 / 重连 / RESUME），按聊天隔离会话。',t:[['acc','官方平台']]},
+
+  // ── 泛 IM ───────────────────────────────────────────────
+  {c:'im',n:'xmanrui/dsh-im',r:'github.com/xmanrui/dsh-im',d:'九合一：飞书、微信、钉钉、企微、QQ、Slack、Telegram、Discord、WhatsApp。扫码或凭证接入。<b>市场里 ★2806，是这类里最热的</b>。',t:[['good','★2806']]},
+  {c:'im',n:'john-walks-slow/dsh-im-humanize',r:'github.com/john-walks-slow/dsh-im-humanize',d:'dsh-im 的「拟人化」分支：发送延迟 + 打字两阶段、消息拆分和流式共存、状态回应、引用回复、不回话的选项。<b>这些细节我们桥里也在一件件做。</b>',t:[['good','思路可借鉴']]},
+  {c:'im',n:'FeatherHunter/dsh-im-companion',r:'github.com/FeatherHunter/dsh-im-companion',d:'dsh-im 的配套：把多个 IM bot 按 Agent 分组、给会话状态加彩色轨道标记和筛选。',t:[]},
+  {c:'im',n:'zhuiyueya/dsh-im-gateway',r:'github.com/zhuiyueya/dsh-im-gateway',d:'聚合网关：微信、飞书、Telegram、Discord、QQ、WhatsApp 等 25 个渠道。',t:[]},
+  {c:'im',n:'534119219/dsh-messaging',r:'github.com/534119219/dsh-messaging',d:'统一消息网关，27 个 IM 平台一个插件，带扫码授权、按平台工作区、斜杠命令和网页配置。',t:[]},
+  {c:'im',n:'MichengAI/dsh-im-connect',r:'github.com/MichengAI/dsh-im-connect',d:'微信、企微、钉钉、飞书、Lark、QQ、Telegram 接到本机 DSH，每个 IM 聊天一个独立工作区频道。',t:[]},
+  {c:'im',n:'wenbin-wb/dsh-bridge',r:'github.com/wenbin-wb/dsh-bridge',d:'远程用 DSH：扫码、局域网、隧道或聊天机器人，支持多工作区、会话同步、媒体消息和审批。',t:[['good','★221']]},
+  {c:'im',n:'173787247/dsh-wsl-im',r:'github.com/173787247/dsh-wsl-im',d:'飞书/企微/钉钉/QQ/Slack/Discord/Telegram/Mattermost 接进 agent，可带本地 Whisper 转写，用环境变量白名单控制。',t:[['bad','默认全开']]},
+  {c:'im',n:'wsz987/dsh-channels',r:'github.com/wsz987/dsh-channels',d:'微信、QQ、钉钉、飞书、Telegram 统一配置接入，带私聊群聊权限控制。',t:[]},
+  {c:'im',n:'AbcdefgXW/dsh-msg-hub',r:'github.com/AbcdefgXW/dsh-msg-hub',d:'微信 / QQ / 飞书通道 + 主动推送：定时任务可以把消息推到手机上。',t:[]},
+  {c:'im',n:'baisama-cloud/dsh-omni-bridge',r:'github.com/baisama-cloud/dsh-omni-bridge',d:'微信、QQ、飞书多通道，按通道分会话，带回复去重。',t:[]},
+  {c:'im',n:'CNranger1124/dsh-lane-bridge',r:'github.com/CNranger1124/dsh-lane-bridge',d:'每个 QQ（SnowLuma / OneBot / 官方 Bot）或 Discord 群和私聊各成一个 agent 会话，绑一个角色卡。',t:[]},
+  {c:'im',n:'CCYellowStar2/dsh-astrbot-ingress',r:'github.com/CCYellowStar2/dsh-astrbot-ingress',d:'借 AstrBot 驱动本机 DSH：用 /dsh 派任务、接着对话。多绕一层，但 AstrBot 的 QQ 适配很成熟。',t:[]}
+];
+
+const CATS = {
+  bridge:  {t:'完整桥 · 与现有桥互斥', n:'装了它就别再装别的桥。每个桥都自己轮询 NapCat、自己记水位、自己发消息 —— 两个一起跑就是重复投递和重复发言。下面是按能力排的，标出的是「它比你现在这套多什么」。'},
+  addon:   {t:'增强件 · 可以与现有桥共存', n:'这些不抢桥的位置：有的给已有会话加工具，有的只读不改，有的是界面件。重叠的地方我标出来了。'},
+  official:{t:'官方 QQ Bot 通道', n:'走腾讯 QQ 开放平台（q.qq.com），需要注册机器人拿正式凭证。它<b>不能</b>拿你个人的 QQ 号当机器人 —— 是另一条产品线，不是 NapCat 的替代。'},
+  im:      {t:'泛 IM 网关 · QQ 只是其中之一', n:'这些是多平台方案，QQ 是九分之一、二十七分之一。适合「顺便也想在微信/Telegram 上跟她说话」，但 QQ 这块的深度通常不如专用桥。'}
+};
+
+const list = document.getElementById('list');
+const countEl = document.getElementById('count');
+const q = document.getElementById('q');
+let cat = 'all';
+
+function render(){
+  const kw = q.value.trim().toLowerCase();
+  const groups = cat === 'all' ? ['bridge','addon','official','im'] : [cat];
+  let shown = 0;
+  const frag = document.createDocumentFragment();
+
+  for (const g of groups){
+    const items = P.filter(p => p.c === g && (!kw || (p.n+' '+p.r+' '+p.d+' '+(p.cmd||'')+' '+(p.t||[]).map(x=>x[1]).join(' ')).toLowerCase().includes(kw)));
+    const sec = document.createElement('section');
+    sec.className = 'cat';
+    const h = document.createElement('div');
+    h.className = 'cat-h';
+    const hh = document.createElement('h2'); hh.textContent = CATS[g].t;
+    const cn = document.createElement('span'); cn.className = 'cat-count'; cn.textContent = items.length + ' 个';
+    h.append(hh, cn);
+    const note = document.createElement('p'); note.className = 'cat-note'; note.innerHTML = CATS[g].n;
+    sec.append(h, note);
+
+    if (!items.length){
+      const e = document.createElement('p'); e.className = 'empty'; e.textContent = '这一类里没有匹配的。';
+      sec.append(e);
+    } else {
+      const ul = document.createElement('ul'); ul.className = 'list';
+      for (const p of items){
+        ul.append(row(p));
+      }
+      sec.append(ul);
+      shown += items.length;
+    }
+    frag.append(sec);
+  }
+  list.replaceChildren(frag);
+  countEl.textContent = shown + ' / ' + P.length;
+}
+
+function row(p){
+  const li = document.createElement('li'); li.className = 'item';
+  const top = document.createElement('div'); top.className = 'item-top';
+  const n = document.createElement('span'); n.className = 'name'; n.textContent = p.n;
+  const w = document.createElement('a'); w.className = 'who'; w.href = 'https://' + p.r.replace(/^https?:\/\//,''); w.target='_blank'; w.rel='noreferrer noopener'; w.textContent = p.r;
+  const tags = document.createElement('span'); tags.className = 'tags';
+  for (const [k, v] of (p.t || [])){
+    const s = document.createElement('span'); s.className = 'tag ' + k; s.textContent = v; tags.append(s);
+  }
+  top.append(n, w, tags);
+  li.append(top);
+
+  const d = document.createElement('p'); d.className = 'desc'; d.innerHTML = p.d;
+  li.append(d);
+
+  if (p.cmd){
+    const c = document.createElement('div'); c.className = 'cmd';
+    const s = document.createElement('span'); s.textContent = p.cmd;
+    const b = document.createElement('button'); b.type='button'; b.textContent='复制';
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(p.cmd); b.textContent = '已复制'; }
+      catch (e) {
+        const r = document.createRange(); r.selectNodeContents(s);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        b.textContent = '已选中';
+      }
+      setTimeout(() => { b.textContent = '复制'; }, 1600);
+    });
+    c.append(s, b);
+    li.append(c);
+  }
+  return li;
+}
+
+document.querySelectorAll('.chip').forEach(ch => {
+  ch.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(o => o.setAttribute('aria-pressed', String(o === ch)));
+    cat = ch.dataset.cat;
+    render();
+  });
+});
+q.addEventListener('input', render);
+render();
+</script>
