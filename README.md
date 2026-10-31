@@ -4,7 +4,7 @@
 会贴表情、会戳回去、会记人、会记事。
 
 这套是在 [`Yuuyuko-uu/dsh-qq-bridge`](https://github.com/Yuuyuko-uu/dsh-qq-bridge) 的基础上
-改出来的本地副本（上游 1.4.2 + 30 处本地补丁 + 3 个自写模块），用
+改出来的本地副本（上游 1.4.2 + 55 处本地补丁 + 3 个自写模块），用
 [NapCat](https://github.com/NapNeko/NapCatQQ) 当协议端，模型走本地网关。
 
 ```
@@ -26,9 +26,15 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 |---|---|
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.4.2 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
+| `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `_stickers/` | 贴纸包（24 张自带 + manifest） |
+| `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
+| `docs/upstream-issue-gate-leak.md` | 门槛吞掉下一轮那个 bug 的复现与补丁（已提 [PR #27](https://github.com/Yuuyuko-uu/dsh-qq-bridge/pull/27)） |
 | `docs/qq-plugins.html` | DSH 生态里 58 个 QQ 相关插件的分类清单 |
 | `docs/research-memory-style.html` | 群聊记忆 / 风格 / 表情包的调研 |
+
+更新上游是 `docs/update-from-upstream.md` 里那套三方合并，不是覆盖。合完必须跑五套测试
+（上游的测试不覆盖我们的补丁，全过只说明「没把上游弄坏」）。
 
 ## 我们在桥上改了什么
 
@@ -88,17 +94,8 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 1. **桥**：把 `vendor/dsh-qq-bridge` 放进 profile 的依赖里（`link:` 指过去），或者直接
    `dsh plugin --profile web add github:<你的fork>`。
 2. **戳一戳适配器**：`tools/qq-events.py` 起在 3999，NapCat 那边配一个 HTTP 客户端把事件推过去。
-   **号码全部走环境变量**，脚本里不留真实值：
-
-   ```ini
-   # ~/.config/systemd/user/qq-events.service
-   Environment=GROUPS=<群号>,<群号>
-   Environment=PRIVATE_QQ=<你自己的QQ>
-   Environment=BOT_QQ=<机器人QQ>
-   ExecStart=/usr/bin/python3 %h/agents/QQ_ds/tools/qq-events.py
-   ```
-
-   `BOT_QQ` 不配的话，她自己戳别人那一下会被当成「有人戳我」转回来。
+   单元模板在 `deploy/qq-events.service.template`，**号码全部走环境变量**，脚本里不留真实值。
+   `BOT_QQ` 不配的话，她自己戳别人那一下会被当成「有人戳我」转回来 —— 启动日志里会喊。
 3. **绑定**：在桥的设置页把 DSH 会话和 QQ 群/私聊对上。桥的配置文件默认在
    `~/.dsh/qq-bridge-config.json`（自己写一份也行，字段见 `默认配置`）。
 

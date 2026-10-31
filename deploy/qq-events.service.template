@@ -1,0 +1,31 @@
+# 戳一戳适配器的 systemd 用户单元（模板）
+#
+# 装法：
+#   cp deploy/qq-events.service.template ~/.config/systemd/user/qq-events.service
+#   # 把下面三个「<...>」换成真值
+#   systemctl --user daemon-reload && systemctl --user enable --now qq-events.service
+#
+# ⚠ 真实号码只写在这一侧，别提交回来 —— 代码里的默认值是空的。
+
+[Unit]
+Description=QQ 事件适配器（戳一戳 → DSH 桥），127.0.0.1:3999
+After=dsh-web.service
+Wants=dsh-web.service
+
+[Service]
+Type=simple
+# 按自己的部署路径改
+WorkingDirectory=%h/agents/QQ_ds/tools
+# GROUPS 只是**兜底**：适配器会直接读桥的 ~/.dsh/qq-bridge-config.json 里的「绑定」，
+# 桥里绑了哪个群就能接哪个群的戳。填错了不影响，但桥配置读不到时会用它。
+Environment=GROUPS=<群号>,<群号>
+# 这两个**必须填**：少了 PRIVATE_QQ 私聊戳不转；少了 BOT_QQ 则「她戳别人」那一下
+# 会被当成「有人戳我」灌回桥里 —— 她会对着戳个没完，而且日志看不出来。
+Environment=PRIVATE_QQ=<你自己的QQ>
+Environment=BOT_QQ=<机器人QQ>
+ExecStart=/usr/bin/python3 %h/agents/QQ_ds/tools/qq-events.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
