@@ -8,9 +8,9 @@
 //
 // ⚠ 安全默认：总开关 = false、试运行 = true —— 不手动打开，一句都不会真的发到 QQ。
 
-import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync, unlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname, basename, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -51,13 +51,32 @@ const 默认配置 = {
   收图: true, // QQ → DSH：她发的图片也转进来
   收图最多: 4, // 一条消息最多转几张
   发图: true, // DSH → QQ：伙伴发的图片也发过去
+  // ⭐ 1.4.5：正文里的 `[名字](路径)` 当文件发（走 OneBot 的 upload_*_file）。
+  //   跟「发图」一样默认开 —— 不开的话模型写了路径也传不出去，很难想到是这个开关。
+  发文件: true,
+  文件上限MB: 50, // 单个文件最大多少 MB；超了只发一句说明，不硬发
+  // ⭐ 1.4.5：文件**只往私聊发**，群里不发。默认开 —— 大群里发文件容易出幺蛾子
+  //   （群文件权限、刷屏、审核），私聊最稳。想在群里也发，把这个改成 false。
+  文件仅私聊: true,
   图上限MB: 5, // 单张最大多少 MB（两个方向共用）
   图片根目录: '', // 正文里 `![名字](相对路径)` 按哪个目录去找（留空 = 自动猜）
+  // [本地补丁 2026-11-02] 文件白名单：正文里 `[名字](路径)` 只发这个目录里的
+  //   （逗号/换行分隔；**留空 = 文件一律不发**）。上游 1.4.5 对文件路径不设限 ——
+  //   群里有人诱导她写 /etc/passwd 就真能传出去，必须靠这一层兜住。
+  文件根目录: '',
   称呼: '对方', // ⭐ 私聊时怎么称呼跟它说话的那个人（写进转给它的文案里，比如「小明发来了图片」）
+  // ⭐ 1.4.4：群里除了 @ 和引用，**正文里直接叫名字**也算点名（逗号/空格分隔；留空 = 不启用）。
+  //   为什么要有：有人会直接说「让它帮我干活」「去问问它」，既没 @ 也没引用 ——
+  //   那种以前只能靠「回复概率」掷骰子，大概率被丢掉，而用户看到的是「名字被叫了却没回应」。
+  点名关键词: '',
   回复门槛: false, // ⚠ 已废弃（2026-10-25）：门槛改成「按绑定行走」——老配置里是 true 的会在迁移时变成那一行的门槛
   // ⭐ 0.7.0（用户 GAME-66 的建议，issue #2）出站两个闸，默认都关
   只发标记内: false, // 开着 = 只发正文里 [QQ]…[/QQ] 那一段（块外的解释/路径/思考留在本地）
   只回QQ唤醒: false, // 开着 = 只有「这一轮是被 QQ 消息叫醒的」才发（你在 DSH 里自己聊的不推到手机）
+  // ⭐ 1.4.4：「只回 QQ 唤醒」开着时，自动触发的轮次（主动搭话、到点刷 B 站）要不要也推到手机。
+  //   关着（默认）= 跟以前一样，只有落在 QQ 唤醒窗口里的才发；开着 = 那几种自动触发一律发。
+  //   ⚠ 你自己在 DSH 窗口里打的字**永远**不发 —— 那才是「只回 QQ 唤醒」本来要挡的东西。
+  自动触发也发: false,
   // ⭐ 0.8.0：语音转写（QQ 语音条 → 文字）。插件自己不带模型，只负责把音频交给「你指定的命令」。
   语音转写: false,
   转写命令: '', // 模板，里面必须带 {file}；例如：python D:sr.py "{file}"
@@ -79,9 +98,18 @@ const 默认配置 = {
   唱歌旋律: '小星星',
   唱歌步数: 50, // 声学扩散步数；越大越慢、细节越多。50 是上游 CLI 默认，短歌约 9 秒
   补投窗口分: 10, // 会话关着期间攒下的消息，超过这么多分钟就不再补投
+  // ⭐ 1.5.0：收「通知类事件」（戳一戳这种）。默认关。
+  //   为什么默认关：这类事件 OneBot 那边**只能推**（HTTP 上报），拉历史消息是拉不到的 ——
+  //   得你自己在 NapCat / SnowLuma 里把「HTTP 上报」指到本插件，开之前先看清 README 那一节。
+  收通知: false,
+  通知口令: '', // 非空时，上报地址必须带 ?token=xxx（防止局域网里别人乱推）
   // ⭐ 2026-10-25（QQ 桥用户反馈「一次回一堆消息」）：长回复按空行拆成几条连发，以前是写死的。
   长回复拆段: true, // 关掉 = 一整段只发一条消息（不再刷屏）
   拆段间隔毫秒: 450, // 每段之间隔多久（太短像刷屏，太长像卡住）
+  // ⭐ 1.4.3：按**句子**拆（不再是「按空行」）。默认关 —— 老用户升级后行为不变。
+  //   开着时：按中英文句末标点（。！？；… 和 .!?;）切，每句一条；括号里的标点不算断句。
+  //   为什么要有：模型经常一整段不带空行，按空行拆等于没拆，发出去一大坨。
+  按句拆: false,
   // ⭐ 2026-10-25：门槛判定「不接」时，要不要**真把这一轮停掉**。
   //   · 关（默认）：不停轮，只把这轮的「出站」掐掉 —— 界面干净，但模型会把这轮想完（费一点 token）
   //   · 开：调用 agent.cancel() 停轮 —— 这才是真的「停止思考」，代价是界面上会出现
@@ -128,7 +156,7 @@ const 默认配置 = {
   //   · >0 = 同一个人在这段时间内连着发的，合成一条（私聊、群都管用）
   //   实现上是「等一小会儿再收」：最后一条没过去这么久，就先不消费，下一跳连新的那条一起收。
   //   ⚠ 别开大：一轮拉历史里本来就能看到「已经发完的那一串」，这里只兜「正好撞上轮询」的那一下。
-  合并窗口秒: 1,
+  合并窗口秒: 3,
   // 最多攒多久（秒）：有人一直发个不停，到点也得先转进来，不能无限等
   合并最多秒: 20,
   // ⭐ 1.1.0（别人要的）：人设（选填）。**塞进每条转进去的消息最前面**，每轮都带。
@@ -276,7 +304,7 @@ function 跑命令(模板, 文件, 超时秒) {
 }
 
 /** 把「语音段」里的东西落成本地文件（QQ 给的有三种形态：http 链接 / base64:// / 本地文件名）
- *  ⚠️ 2026-10-25 修（她实测报的）：以前直接把 `file` 丢给转写命令 —— 那个值经常是
+ *  ⚠️ 2026-10-25 修：以前直接把 `file` 丢给转写命令 —— 那个值经常是
  *     `https://multimedia.nt.qq.com.cn/download?appid=...` 这种**网络地址**，
  *     命令当然找不到文件，就报「找不到音频文件」。现在先下载/解码到本地再交给它。 */
 async function 语音落文件(段, 拉任意, 家目录, 名) {
@@ -441,12 +469,19 @@ function 规整绑定(raw, 混, 字, 布) {
     return {
       类型, 号码, 会话, 称呼, 门槛: 布(x && x.门槛, false),
       // ⭐ 1.1.0：这一条聊天可以有自己的「人设」（空 = 用上面那个总的人设）
-      人设: String((x && x.人设) || '').slice(0, 2000),
+      // ⭐ 1.4.3：不再截到 2000 字 —— 以前超出的部分被**静默**截掉，用户不知道后半截没生效。
+      //   现在只做上限保护（2 万字），超了由设置页明确提示，不再悄悄砍。
+      人设: String((x && x.人设) || '').slice(0, 20000),
       // ⭐ 1.1.8：这一条聊天自己的开关
       //   开 = false：这个群/私聊整个静音（不收也不发），配置留着，随时勾回来
       开: 布(x && x.开, true),
       //   只听点名 = true：这个群平时不读，只有 @ / 引用它才进来（null = 跟全局「群里听所有人」走）
       只听点名: x && x.只听点名 == null ? null : 布(x.只听点名, false),
+      // ⭐ 1.4.3：不听点名也直接收的 QQ 号（逗号/空格/换行分隔）。
+      //   「只听点名」对**群里所有人**生效（包括自己、包括机器人自己以外的任何号），
+      //   只有这里列出来的号例外 —— 他们说的话不用点名也收。
+      点名例外: String((x && x.点名例外) || '')
+        .split(/[\s,，、;；]+/).map((s) => s.trim()).filter(Boolean).slice(0, 30).join(','),
     }
   }
   if (Array.isArray(raw)) {
@@ -506,7 +541,7 @@ function 归一化(原始) {
     目标会话: 私聊行 ? 私聊行.会话 : '',
     私聊QQ: 私聊行 ? 私聊行.号码 : 字(混.私聊QQ),
     群号: 群行 ? 群行.号码 : '',
-    // ⚠️ 2026-10-25（她报的「群里没收到它的回复」）：这两个老开关界面上已经不显示了，
+    // ⚠️ 2026-10-25：这两个老开关界面上已经不显示了，
     //    却还在拦发送 —— 她加了群绑定、但 转群 还是默认 false，于是群里一条都收不到。
     //    现在**有那一行就代表要发**：直接从绑定推。
     转私聊: 绑定.some((b) => b.类型 === '私聊'),
@@ -516,15 +551,26 @@ function 归一化(原始) {
     绑定,
     收图: 布(混.收图, 默认配置.收图),
     发图: 布(混.发图, 默认配置.发图),
+    // ⭐ 1.4.5：正文里的 `[名字](路径)` 当文件发
+    发文件: 布(混.发文件, 默认配置.发文件),
+    文件上限MB: 数(混.文件上限MB, 默认配置.文件上限MB, 1, 2048),
+    // ⭐ 1.4.5：文件只往私聊发（默认开）—— 大群里发文件容易出问题
+    文件仅私聊: 布(混.文件仅私聊, 默认配置.文件仅私聊),
     收图最多: 数(混.收图最多, 默认配置.收图最多, 1, 10),
     图上限MB: 数(混.图上限MB, 默认配置.图上限MB, 1, 30),
     图片根目录: 字(混.图片根目录),
+    文件根目录: 字(混.文件根目录),
     称呼: (私聊行 ? 私聊行.称呼 : (字(混.称呼) || 默认配置.称呼)),
+    // ⭐ 1.4.4：正文里叫名字也算点名。⚠ 这一行必须在白名单里 ——
+    //   归一化会把不认识的字段直接扔掉（1.4.3 的「按句拆」就是漏在这儿，勾上保存就弹回去）。
+    点名关键词: 字(混.点名关键词),
     // ⚠ 老字段，只用来迁移：以前「总开关 + 每行」两个一起管太难懂，
     //    现在**只认每一行自己的门槛**；老配置里总开关是开的，就给群那几行默认打开。
     回复门槛: 布(混.回复门槛, 默认配置.回复门槛),
     只发标记内: 布(混.只发标记内, 默认配置.只发标记内),
     只回QQ唤醒: 布(混.只回QQ唤醒, 默认配置.只回QQ唤醒),
+    // ⭐ 1.4.4：自动触发的轮次（主动搭话、定时任务）也推到手机
+    自动触发也发: 布(混.自动触发也发, 默认配置.自动触发也发),
     语音转写: 布(混.语音转写, 默认配置.语音转写),
     转写命令: 字(混.转写命令).slice(0, 400),
     语音模型目录: 字(混.语音模型目录).slice(0, 400),
@@ -543,6 +589,9 @@ function 归一化(原始) {
     补投窗口分: 数(混.补投窗口分, 默认配置.补投窗口分, 1, 240),
     长回复拆段: 布(混.长回复拆段, 默认配置.长回复拆段),
     拆段间隔毫秒: 数(混.拆段间隔毫秒, 默认配置.拆段间隔毫秒, 0, 5000),
+    // ⚠ 1.4.4：这一项 1.4.3 加前端、加默认值、加业务逻辑，**唯独漏在这张白名单里** ——
+    //   归一化把不认识的字段直接扔掉，于是「勾上 → 保存 → 弹回去」，配置文件里也从来写不进去。
+    按句拆: 布(混.按句拆, 默认配置.按句拆),
     门槛真停轮: 布(混.门槛真停轮, 默认配置.门槛真停轮),
     群称呼: (群行 ? 群行.称呼 : (字(混.群称呼) || 默认配置.群称呼)),
     // ⭐ 0.9.9：群里只收「点了名」的；开了这个就收全群（交给门槛判）
@@ -579,8 +628,11 @@ function 归一化(原始) {
       : (混.私聊署名 === true ? '前缀' : 默认配置.私聊署名),
     // ⭐ 1.1.0：人设（选填）
     人设开: 布(混.人设开, 默认配置.人设开),
-    人设: 字(混.人设).slice(0, 2000),
+    人设: 字(混.人设).slice(0, 20000),
     轮询间隔毫秒: 数(混.轮询间隔毫秒, 默认配置.轮询间隔毫秒, 800, 30000),
+    // ⭐ 1.5.0：通知类事件（戳一戳）—— 默认关
+    收通知: 布(混.收通知, 默认配置.收通知),
+    通知口令: 字(混.通知口令).slice(0, 200),
   }
 }
 
@@ -597,6 +649,26 @@ function 归一化(原始) {
 const 会话键 = (v) => {
   const s = String(v == null ? '' : v).trim()
   return s.startsWith('session-') ? s.slice('session-'.length) : s
+}
+
+/**
+ * 「搭车进来的注入」的 source.kind —— 它们**不是这一轮的话头**。
+ *
+ * ⚠ 1.4.9 实测（她本机会话日志第 49680 条那个回合）：宿主会跟在她那句话**后面**再塞几条 user/message：
+ *   `user` → `runtime-context`（运行环境）→ `time-context`（时间）。
+ *   这些是搭车的，谁也不该拿它们当「这一轮是谁起的头」——
+ *   1.4.8 让「带 kind 就覆盖」真的生效之后，它们就把她标成"不是她打的"，被推到了 QQ。
+ *
+ * 已知的：runtime-context / time-context / skill-catalog / compact-checkpoint / model-selection /
+ * her-words / memory，以及 `repeat-tool-reminder*` / `plugin:*` 两类前缀。
+ * ⚠ 以后 DSH 再加新的注入类型，这里要补一行；漏了不会炸，只会让那一轮被当成「自动触发」。
+ */
+const 搭车注入 = new Set(['runtime-context', 'time-context', 'skill-catalog', 'compact-checkpoint', 'model-selection', 'her-words', 'memory'])
+function 是搭车注入(类) {
+  const k = String(类 || '')
+  if (!k) return false
+  if (搭车注入.has(k)) return true
+  return k.startsWith('repeat-tool-reminder') || k.startsWith('plugin:')
 }
 
 const 收图目录 = join(目录, 'qq-bridge-inbox')
@@ -724,7 +796,7 @@ function 写配置(配置) {
 /**
  * ⭐ 0.9.9：「这条是不是点了我的名」——@ 了我，或引用的是我发过的消息。纯函数，方便自测。
  */
-export function 识别点名(段们, 自己QQ, 己方消息) {
+export function 识别点名(段们, 自己QQ, 己方消息, 关键词们) {
   const 我 = String(自己QQ || '')
   let 点名 = false
   for (const 段 of Array.isArray(段们) ? 段们 : []) {
@@ -733,6 +805,21 @@ export function 识别点名(段们, 自己QQ, 己方消息) {
     if (型 === 'at' && 我 && String(段.data.qq || '') === 我) 点名 = true      // at 全体（qq='all'）不算
     if (型 === 'reply' && 段.data.id != null && 己方消息 && typeof 己方消息.has === 'function'
         && 己方消息.has(String(段.data.id))) 点名 = true
+  }
+  // ⭐ 1.4.4：第三个途径 —— **正文里直接叫名字**（既没 @ 也没引用）。
+  //   以前那种消息只能靠「回复概率」掷骰子，大概率被丢掉；用户看到的是「名字被叫了却没回应」，
+  //   很难理解是概率拦的。关键词留空 = 完全跳过，默认行为一点不变。
+  if (!点名) {
+    const 词们 = Array.isArray(关键词们)
+      ? 关键词们.map((s) => String(s || '').trim()).filter(Boolean)
+      : []
+    if (词们.length) {
+      const 文 = (Array.isArray(段们) ? 段们 : [])
+        .filter((段) => 段 && String(段.type || '') === 'text' && 段.data)
+        .map((段) => String(段.data.text || ''))
+        .join('\n')
+      if (文 && 词们.some((k) => 文.includes(k))) 点名 = true
+    }
   }
   return 点名
 }
@@ -781,6 +868,23 @@ export function 该收这条(选项 = {}) {
     用掉一条: true,
     原因: '接听中，还剩 ' + 下一份.剩 + ' 条',
   }
+}
+
+/**
+ * ⭐ 1.4.3：这个群里的某个人，能不能**不听点名**就进来。
+ *
+ * 「只听点名」现在对群里**所有人**生效（包括自己发的话）—— 以前自己发的话有个短路，
+ * 在群里随手发点东西也会被当成对着它说。例外只写在这一行的「点名例外」名单里。
+ *
+ * @param {string} 名单 逗号/空格分隔的 QQ 号（配置里已经规整过）
+ * @param {number|string} 发信人 这条消息的 user_id
+ * @returns {boolean} true = 这个人不用点名也收
+ */
+export function 在点名例外名单(名单, 发信人) {
+  const 号 = String(发信人 == null ? '' : 发信人).trim()
+  if (!号) return false
+  const 表 = String(名单 || '').split(/[\s,，、;；]+/).map((s) => s.trim()).filter(Boolean)
+  return 表.some((x) => x === 号)
 }
 
 /**
@@ -947,8 +1051,51 @@ export function 抓歌名(文) {
   return 名
 }
 
-/** ⭐ 2026-10-22：从一条 assistant 消息里挑出图片块（要发到 QQ 的那几张）。 */
-export function 提取图块(message) {
+/**
+ * ⭐ 1.4.3：按**句子**拆 —— 每条消息一句话，读起来更像人在打字。
+ *
+ * 规则（故意做得保守，宁可少切不要切坏）：
+ *   · 断在句末标点后面：`。！？；…` 和英文的 `.!?;`；连续标点（`？！`、`……`）算一处，不重复切。
+ *   · 标点后如果紧跟右引号/右括号，一起留在这一句里。
+ *   · **括号里的标点不算断句**（中英文括号都算）—— 不然一句话被切成两半，念起来是断的。
+ *   · 空段丢掉。
+ * 关掉「按句拆」时完全走原来的按空行拆，一个字节都不变。
+ */
+export function 按句拆(文字) {
+  const 原 = String(文字 || '').trim()
+  if (!原) return []
+  const 出 = []
+  // ⚠ 空行是**硬边界**：先按空行分段，段内再按句切。
+  //   不然「一段话 + 空行 + 另一段」会被当成一句，白白丢了原有的分段。
+  for (const 段 of 原.split(/\n\s*\n/)) {
+    const 本段 = String(段 || '').trim()
+    if (!本段) continue
+    let 起 = 0
+    let 括号深 = 0
+    for (let i = 0; i < 本段.length; i++) {
+      const c = 本段[i]
+      if (c === '（' || c === '(' || c === '【' || c === '[') 括号深++
+      else if (c === '）' || c === ')' || c === '】' || c === ']') 括号深 = Math.max(0, 括号深 - 1)
+      if (括号深 > 0) continue
+      if (!'。！？；…!?;'.includes(c)) continue
+      // 把连续标点吃干净（`？！`、`……`、`。！`）
+      let j = i + 1
+      while (j < 本段.length && '。！？；…!?;，,、'.includes(本段[j])) j++
+      // 紧跟的右引号/右括号也算这一句的
+      while (j < 本段.length && '”’」』）)】]'.includes(本段[j])) j++
+      const 句 = 本段.slice(起, j).trim()
+      if (句) 出.push(句)
+      起 = j
+      i = j - 1
+    }
+    const 尾 = 本段.slice(起).trim()
+    if (尾) 出.push(尾)
+  }
+  // 一句都没切出来（例如整段没标点）→ 退回整段，别把话丢了
+  return 出.length ? 出 : [原]
+}
+
+/** ⭐ 2026-10-22：从一条 assistant 消息里挑出图片块（要发到 QQ 的那几张）。 */export function 提取图块(message) {
   if (!message || !Array.isArray(message.content)) return []
   return message.content.filter((b) => b && b.type === 'image' && b.attachment).slice(0, 10)
 }
@@ -987,6 +1134,35 @@ export function 抠正文图(文字) {
 const 包根 = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
+ * ⭐ 1.5.0：正文里的**普通 markdown 链接** `[名字](路径)` 当文件发。
+ *
+ * 跟图片分开：图片是 `![名](路径)`，文件是 `[名](路径)`（前面没有感叹号）。
+ * 只认「像本地路径」的目标 —— http(s) / data / mailto / #锚点 一律跳过，那是网页链接。
+ *
+ * ⚠ 只在「发文件」开着时才调；关着时正文一个字都不动。
+ * @returns {{净文字: string, 文件: Array<{label: string, value: string}>}}
+ */
+export function 抠正文文件(文字) {
+  const 文件 = []
+  const 净文字 = String(文字 || '')
+    // 两种写法都认：`[名](路径)` 和 `[名](<带 空格 的路径>)`
+    .replace(/(^|[^!])\[([^\]\n]{0,120})\]\(\s*(?:<([^>\n]+)>|([^)\s]+))\s*\)/g,
+      (全, 前, 标签, 尖括号, 普通) => {
+        const p = String(尖括号 || 普通 || '').trim()
+        if (!p) return 前
+        if (/^(?:https?|data|mailto|ftp|tel):/i.test(p) || p.startsWith('#')) {
+          return 前 + '[' + 标签 + '](' + p + ')'
+        }
+        if (!文件.some((x) => x.value === p)) 文件.push({ label: String(标签 || '').trim(), value: p })
+        return 前
+      })
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { 净文字, 文件 }
+}
+
+/**
  * ⭐ 1.0.4：把 `[QQ]…[/QQ]` 处理成「真正要发出去的文字」。
  *
  * 三种情况：
@@ -1015,8 +1191,39 @@ export function 抠QQ标记(文字, 只发标记内) {
   return { 发: false, 文字: '', 原因: '没写块' }
 }
 export function apply(ctx) {
+  /**
+   * ⭐ 1.5.0：管理类接口只认「本人」。
+   *
+   * 插件自己挂在 webServer 上的地址**不会自动带 DSH 的登录校验** —— 也就是说，
+   * 你随便打开一个网页，那个网页都能悄悄 POST 到 `<前缀>/save` 改配置
+   * （比如把 NapCat 指到别人的服务器上、或者 `/test-send` 替你发消息）。
+   *
+   * ⚠⚠ 这里**一律「失败就放行」**：拿不到 connection 服务、老宿主没这个接口、内部抛错 —— 全当没事放过去。
+   *   宁可这一版防不住，也不能因为宿主换个版本就把设置页锁死（本地单机「能用」比多一层保险重要）。
+   *   真正拒绝只有一种情况：宿主**明确**说这个请求不合法（401 / 403）。
+   *   每拒一次都记一行日志 —— 万一哪天设置页打不开，日志里能直接看出是不是它干的。
+   */
+  const 只认本人 = (handler) => async (req, res) => {
+    try {
+      const 连接 = ctx.get('connection')
+      const 拒 = 连接 && typeof 连接.requestRejection === 'function' ? 连接.requestRejection(req) : undefined
+      if (拒 === 401 || 拒 === 403) {
+        记账('管理接口拒了一次外来请求（' + 拒 + '）：' + String((req && req.url) || ''))
+        回(res, { ok: false, 说: 拒 === 401 ? 'authentication_required' : 'management_forbidden' })
+        return
+      }
+    } catch (error) {
+      // 鉴权这条路自己坏了 → 放行，绝不让设置页打不开
+    }
+    return handler(req, res)
+  }
+
   // ⭐ 设置页那个「检查更新」：查这个插件自己的仓库
-  createSelfUpdate({ packageRoot: 包根, diag: 记账 }).register(ctx, 路由前缀)
+  //   （它的「一键更新」会真的装包，所以也走同一道门）
+  createSelfUpdate({ packageRoot: 包根, diag: 记账 }).register({
+    effect: (fn) => ctx.effect(fn),
+    webServer: { register: (o) => ctx.webServer.register({ ...o, handler: (req, res) => 只认本人(o.handler)(req, res) }) },
+  }, 路由前缀)
   // ---------- 状态 ----------
 
   const 日志 = []
@@ -1031,7 +1238,10 @@ export function apply(ctx) {
   // ⭐ 0.6.0：每个「聊天」各自记「看到哪儿了」（键 = 类型:号码）—— 多群多私聊才不会互相串
   const 上次时间 = new Map() // 水位必须先初始化，再恢复磁盘状态
   const 已转消息 = new Set() // 已经转发进 DSH 的 QQ 消息 id（防重复转）
-  // ⚠️ 2026-10-25（她报的「我没发新消息，它却自己回了一条」）：
+  // ⭐ 1.4.7：每条消息「本机第一次看到它」的时间（秒）—— 攒条窗口按它算，
+  //   这样既不依赖 QQ 服务器的时间戳，也不会因为每一跳重读同一批而把窗口无限延长。
+  const 见时 = new Map()
+  // ⚠️ 2026-10-25：
   //   这两个东西以前**只存在内存里** —— 插件一重启（今天改了鱼的心情 / 换插件都要重启），
   //   「看到哪儿了」就归零 ⇒ 最近那十几条历史消息会**被当成新消息重投一遍**，
   //   于是她一点开会话就冒出一条自动回复。现在落盘到 qq-bridge-state.json，重启接着上次。
@@ -1108,12 +1318,21 @@ export function apply(ctx) {
     return h
   }
 
+  /**
+   * 单条发送的超时。
+   * ⚠ 不能太短：**发图是把图转成 base64 一起 POST 上去的**，一张几 MB 的图在慢机器上
+   *   十几秒都正常；超时一断这条就丢了（不重试）。60 秒是「卡住了能自己回来、正常发图又不误伤」的折中。
+   */
+  const 发送超时毫秒 = 60000
+
   async function 发一个(base, action, 体, 配置) {
     try {
       const r = await fetch(`${base}/${action}`, {
         method: 'POST',
         headers: 请求头(配置),
         body: JSON.stringify(体),
+        // ⭐ 1.5.0：NapCat 收了请求却不回时，别让这一轮永远挂着（以前没有超时）
+        signal: AbortSignal.timeout(发送超时毫秒),
       })
       const j = await r.json()
       const 好 = !!(j && j.status === 'ok' && j.retcode === 0)
@@ -1240,12 +1459,19 @@ export function apply(ctx) {
     const 出 = []
     // 正文里的 markdown 图（贴纸就是这么发的）也当图片发；抠掉之后正文更干净
     const 抠过 = 配置.发图 ? 抠正文图(原文字) : { 净文字: String(原文字 || ''), 图: [] }
-    const 文字 = 抠过.净文字
+    // ⭐ 1.5.0：正文里的 `[名字](本地路径)` 当文件发。
+    //   `![名](路径)` 是图片（上面刚抠走），`[名](路径)` 才是文件；http 链接不算。
+    const 抠文件 = 配置.发文件 ? 抠正文文件(抠过.净文字) : { 净文字: 抠过.净文字, 文件: [] }
+    const 文字 = 抠文件.净文字
     // ⭐ 2026-10-25：拆段和间隔都能配：不拆 = 一整条发出去
     const 要拆 = 配置.长回复拆段 !== false
-    const 段们 = 要拆 && 按段拆(文字).length
-      ? 按段拆(文字)
-      : [String(文字 || '').trim()].filter((s) => s.length > 0)
+    // ⭐ 1.4.3：可选「按句子拆」（默认关）；开了就按标点切，每句一条
+    const 用按句 = 要拆 && 配置.按句拆 === true
+    const 段们 = 用按句
+      ? 按句拆(文字).filter((s) => s.length > 0)
+      : (要拆 && 按段拆(文字).length
+        ? 按段拆(文字)
+        : [String(文字 || '').trim()].filter((s) => s.length > 0))
     const 发段延迟 = Math.max(0, Math.min(Number(配置.拆段间隔毫秒) || 0, 5000))
     const 最大 = Math.max(1, Math.min(Number(配置.图上限MB) || 5, 30)) * 1024 * 1024
     // ⭐ 图片：base64 或网络地址，QQ 那边直接收，不用访问本机文件
@@ -1284,6 +1510,46 @@ export function apply(ctx) {
     }
     // 一条 OneBot 图片段：本地图走 base64，网络图直接把 url 交给 QQ
     const 一段图 = (x) => (x.url ? { type: 'image', data: { file: x.url, url: x.url } } : 图片段(x.b64))
+
+    // ⭐ 1.5.0：文件先验一遍 —— 得真存在、不能超过上限。
+    //   找不到 / 太大都记一笔（不然人以为发了，其实什么都没出去）。
+    const 文件上限 = Math.max(1, Math.min(Number(配置.文件上限MB) || 50, 2048)) * 1024 * 1024
+    const 要发的文件 = []
+    // [本地补丁 2026-11-02] 文件白名单：只认「文件根目录」里的路径（留空 = 一个都不发）。
+    //   先在启动时把根目录 realpath 一遍，后面拿真路径比前缀 —— 防 ../ 和软链绕过。
+    const 文件根们 = String(配置.文件根目录 || '')
+      .split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
+      .map((s) => { try { return realpathSync(s) } catch (error) { return '' } })
+      .filter(Boolean)
+    for (const f of 抠文件.文件) {
+      try {
+        const 候选路 = isAbsolute(f.value) ? [f.value] : [f.value, join(process.cwd(), f.value)]
+        let 真 = null
+        for (const p of 候选路) {
+          try {
+            if (existsSync(p) && statSync(p).isFile()) { 真 = realpathSync(p); break }
+          } catch (error) { /* 试下一个 */ }
+        }
+        if (!真) { 记账('文件「' + (f.label || f.value) + '」在本机找不到，跳过（这条不会发出去）'); continue }
+        // [本地补丁 2026-11-02] 白名单：不在根目录里就不发（比的是 realpath 之后的真路径）
+        if (!文件根们.length) { 记账('「文件根目录」没配，文件一律不发（' + (f.label || f.value) + '）'); continue }
+        if (!文件根们.some((根) => 真 === 根 || 真.startsWith(根 + sep))) {
+          记账('文件「' + (f.label || f.value) + '」不在「文件根目录」里，跳过（这条不会发出去）')
+          continue
+        }
+        const 大小 = statSync(真).size
+        if (大小 > 文件上限) {
+          记账('文件「' + basename(真) + '」有 ' + Math.round(大小 / 1048576) + 'MB，超过上限 ' + 配置.文件上限MB + 'MB，跳过')
+          continue
+        }
+        if (要发的文件.some((x) => x.path === 真)) continue
+        // 名字：标签带后缀就用标签（人是照着标签认的），否则用真实文件名
+        const 名 = f.label && /\.[A-Za-z0-9]{1,8}$/.test(f.label) ? f.label : basename(真)
+        要发的文件.push({ path: 真, name: 名 })
+      } catch (error) {
+        记账('看文件失败，跳过：' + String((error && error.message) || error))
+      }
+    }
 
     if (!候选.length) {
       记账(键
@@ -1345,6 +1611,24 @@ export function apply(ctx) {
           await new Promise((r) => setTimeout(r, 发段延迟))
         }
       }
+      // ⭐ 1.5.0：文件走 upload_group_file / upload_private_file —— 跟 send_msg 不是同一个接口，
+      //   参数也不一样（要 file 的**本机路径** + name），所以单独一趟。
+      for (const f of 要发的文件) {
+        const 是群行 = 行.类型 === '群'
+        if (是群行 ? !要群 : !要私聊) continue
+        // ⭐ 1.4.5：「文件仅私聊」开着（默认）时，群里只发文字、不发文件。
+        //   大群发文件容易出问题（权限、刷屏、审核），私聊最稳。
+        if (是群行 && 配置.文件仅私聊 !== false) {
+          记账('群里不发文件（「文件仅私聊」开着 —— 想在群里发就去设置里关掉它）：' + f.name)
+          continue
+        }
+        const 动作 = 是群行 ? 'upload_group_file' : 'upload_private_file'
+        const 体 = 是群行
+          ? { group_id: Number(行.号码), file: f.path, name: f.name }
+          : { user_id: Number(行.号码), file: f.path, name: f.name }
+        出.push(await 发一个(配置.NapCat, 动作, 体, 配置))
+        await new Promise((r) => setTimeout(r, 发段延迟))
+      }
     }
     // [本地补丁 2026-10-30] 记住「这间会话最后发出去的是哪条」—— qq_recall 撤的就是它。
     try {
@@ -1357,7 +1641,7 @@ export function apply(ctx) {
   }
 
   /** 一轮真正落地：总开关 / 试运行 在这儿把关。 */
-  async function 落地一发(配置, 文字, 图们, 方向 = '', 是QQ唤醒 = false, 引用id = '') {
+  async function 落地一发(配置, 文字, 图们, 方向 = '', 是QQ唤醒 = false, 引用id = '', 是本地手打 = false) {
     if (已发轮.size > 300) 已发轮.clear() // 防 Set 无限长
     // ⭐ 0.6.0：方向就是「哪一间会话」—— 下面按它去绑定里反查该发到哪个聊天
     const 这份会话 = String(方向 || '')
@@ -1381,7 +1665,17 @@ export function apply(ctx) {
     let 待发文字 = 标记.文字
     // ⭐ 0.7.0 出站闸二：只发「被 QQ 消息叫醒的那一轮」（你坐在 DSH 里自己聊的不推到手机）
     if (配置.只回QQ唤醒) {
-      if (!是QQ唤醒) {
+      // ⭐ 1.4.4：这一刀以前切得太大 —— 判据是「最近有没有 QQ 消息进来」，
+      //   于是**自动触发**的轮次（主动搭话、到点刷 B 站）也一起被挡了；
+      //   它们根本不是「你在窗口里自己聊」。现在按 source.kind 分开看：
+      //   · 你自己在 DSH 里打的字（source 为空 / 'user'）→ 一律留本地，这就是「只回 QQ 唤醒」的字面意思
+      //   · 自动触发的（'speak-up'、定时任务等）→ 想让它们也推到手机，把「自动触发也发」打开
+      //   · QQ 转进来的（'qq'）→ 照常发
+      if (是本地手打) {
+        记账('这一轮是你在 DSH 窗口里自己打的（「只回 QQ 唤醒」开着）—— 只留本地，不推 QQ')
+        return
+      }
+      if (!是QQ唤醒 && 配置.自动触发也发 !== true) {
         记账('这一轮不是 QQ 消息叫醒的（「只回 QQ 唤醒」开着）—— 只在 DSH 里说，不推 QQ')
         return
       }
@@ -1418,9 +1712,10 @@ export function apply(ctx) {
     const 上一轮 = 上一轮们.get(键) || 空轮()
     const 记上一轮 = (v) => 上一轮们.set(键, v)
 
-    // [本地补丁 2026-10-29] 新一轮一开，上一轮的静默标记就必须作废。
-    //   正常路径下面 turn/end 会清；这里兜底那些**没发 turn/end 就没了**的轮次
-    //   （宿主被杀、会话被换掉），否则标记会一直挂着，把这个会话接下来所有回复吞掉。
+    // ⭐ 1.4.8（issue #27）：新一轮一开，上一轮的「静默标记」就必须作废。
+    //   正常路径下面 turn/end 会清；这里兜住那些**没发 turn/end 就没了**的轮次
+    //   （宿主被杀、会话被换掉、插件在这一轮里被卸载重载），
+    //   否则标记会一直挂着，把这个会话接下来的回复全吞掉（表现是「它明明回了，群里却没有」）。
     if (event && event.type === 'turn/start') {
       静默轮.delete(键)
       return
@@ -1454,15 +1749,38 @@ export function apply(ctx) {
     // ⭐ 1.0.1：她自己在这间会话里打了字（source 不是 qq）→ 尾巴立刻清掉，
     //   不然「QQ 叫醒一次」会把后面她自己聊的几轮也推去手机（老坑）。
     if (event && event.type === 'user/message') {
-      const 源 = event.data && event.data.message && event.data.message.source
+      // ⚠⚠⚠ 1.4.8：`source` 在**事件自己的 data 上** —— user/message 的 data 就是消息本体
+      //   （`{ id, role, content, source }`，实测她本机会话日志的 7388 条 user/message 全是这个形状）。
+      //   只有 assistant/message 那种才包一层 `data.message`。
+      //   1.4.4~1.4.7 读的是 `event.data.message.source` —— 永远是 undefined ⇒ `kind` 永远空
+      //   ⇒ 每一轮都被判成「你在 DSH 窗口里自己打的」⇒「只回 QQ 唤醒」开着时，
+      //   **QQ 转进来的消息回不出去**（日志写「这一轮是你在 DSH 窗口里自己打的」，明明是从 QQ 来的）。
+      //   两种形状都试，哪天真换了也不会立刻断。
+      const 源 = (event.data && (event.data.source || (event.data.message && event.data.message.source))) || null
       const 类 = String((源 && 源.kind) || '')
       if (!类 || 类 === 'user') 尾巴.delete(键)
+      // ⭐ 1.4.4：把「这一轮是谁起的头」记下来 —— turn/end 判定要不要推到手机时用
+      // ⚠⚠ 1.4.9：**只认第一次，而且跳过「搭车的注入」**。
+      //   1.4.7 改成了「带 kind 就覆盖」，1.4.8 又把 kind 真正读出来了 —— 于是冒出一个新洞：
+      //   宿主会在她那句话**后面**再塞 runtime-context / time-context（实测第 49680 条那个回合就是
+      //   `user` → `runtime-context` → `time-context`），后者把她标成「不是她打的」，
+      //   再配上「自动触发也发」开着 ⇒ **她在窗口里自己聊的话被推到了 QQ**。
+      //   话头只有一个，就是先开口的那个；搭车的注入没有资格改它。
+      if (类 === 'qq') 本轮有QQ.set(键, true)
+      if (!轮来源.has(键) && !是搭车注入(类)) 轮来源.set(键, 类 || 'user')
       return
     }
 
     if (event && event.type === 'turn/end') {
       const d = event.data || {}
       const 完成 = !!(d.reason && d.reason.kind === 'completed')
+      // ⭐ 1.4.8（issue #27）：静默标记只对**触发它的那一轮**有效，这一轮一结束就作废。
+      //   以前只在「这一轮真的说完了话」那条路上清，下面两种情况都清不掉：
+      //     · 门槛判了不接 → 这一轮是被 cancel 停的，turn/end 是 aborted（完成 = false）
+      //     · 这一轮一个字都没说出来（没有内容）
+      //   标记于是漏到下一轮，下一轮 completed 时被当成「判定过的不接」整轮跳过。
+      const 这轮静默 = 静默轮.has(键)
+      if (这轮静默) 静默轮.delete(键)
       const 有东西 = 上一轮.文本 || (上一轮.图们 && 上一轮.图们.length)
       // ⚠ 去重的键必须是「会话 + 轮号」：只按轮号的话，换过目标会话就会静默漏发
       const 轮标 = 键 + ':' + String(d.turn)
@@ -1489,28 +1807,21 @@ export function apply(ctx) {
         触发消息.delete(键)
         触发文字.delete(键)
         本轮声音.delete(键)
+        // ⭐ 1.4.4：这一轮是谁起的头（'qq' / 'speak-up' / 'user' / 别的）
+        //   ⚠ 只有**真的收到过 user/message 事件**才下结论；没记录就按老逻辑走（不能误挡）。
+        const 有来源 = 轮来源.has(键)
+        const 来源 = 轮来源.get(键) || ''
+        // ⭐ 1.4.7：这一轮里只要**出现过** qq 来源，后面来的注入就盖不掉它
+        const 这轮来过QQ = 本轮有QQ.get(键) === true
+        轮来源.delete(键)
+        本轮有QQ.delete(键)
+        const 是本地手打 = !这轮来过QQ && 有来源 && (来源 === 'user' || 来源 === '')
         // 门槛判了「不接」→ 这一轮一个字都不往外发（但会话里照常留着）
-        // [本地补丁 2026-10-28] 静默标记是**一次性的**，必须每轮结束都清掉。
-        //   以前它只在「这一轮确实有话说」时才被消费；如果某轮只调了 qq_reply_gate、
-        //   正文是空的（或那轮被 cancel 成 aborted），标记会漏到**下一轮** ——
-        //   把下一轮真正想说的话吃掉（实测：887 群里「嘴比你快是事实…」那句就这么没的）。
-        if (静默轮.has(键)) {
-          静默轮.delete(键)
+        if (这轮静默) {
           记账('回复门槛：这一轮按判定跳过发送（' + 短id(键) + '）')
         } else {
-          void 落地一发(配置, 上一轮.文本, 上一轮.图们, 方向, 是QQ唤醒, 引用id)
+          void 落地一发(配置, 上一轮.文本, 上一轮.图们, 方向, 是QQ唤醒, 引用id, 是本地手打)
         }
-      } else if (静默轮.has(键)) {
-        // [本地补丁 2026-10-29] 上面那个「每轮结束都清掉」其实**清不到**这里 ——
-        //   它圈在 `完成 && …` 里面，而门槛判「不接」是把这一轮 cancel 成 **aborted**，
-        //   完成=false，于是标记原封不动留到下一轮，把下一轮真正想说的话吃掉。
-        //   实测（某个群里）两发两中：
-        //     15:39:22 turn 347 判不接(aborted) → 15:41:05「对，南航出钱养我…」没发出去
-        //     15:43:49 turn 349 判不接(aborted) → 15:44:07「你这不就是把我那两句揉一揉…」没发出去
-        //   用户报的「经常有消息没发出去」就是这个：每判一次不接，下一句就被吞。
-        //   标记本来就该只对「触发它的那一轮」有效，所以在任何一轮结束时都到这来收尾。
-        静默轮.delete(键)
-        记账('回复门槛：静默标记在这轮结束（' + 短id(键) + '），不带进下一轮')
       }
       记上一轮(空轮())
     }
@@ -1743,7 +2054,7 @@ export function apply(ctx) {
   const ASR模型名 = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17'
   const ASR模型目录 = () => join(ASR模型根, ASR模型名)
   const ASR模型就绪 = () => existsSync(join(ASR模型目录(), 'model.int8.onnx')) && existsSync(join(ASR模型目录(), 'tokens.txt'))
-  // ⚠️ 2026-10-25（她实测）：官方那个 tar.bz2 有 **999MB** —— 因为把 fp32 模型也打进去了。
+  // ⚠️ 2026-10-25：官方那个 tar.bz2 有 **999MB** —— 因为把 fp32 模型也打进去了。
   //    我们只需要 int8 的 model.int8.onnx + tokens.txt（约 230MB + 1MB），
   //    所以改成**按文件下**（HuggingFace 上单个文件，另配 hf-mirror 兜底）。
   const ASR文件 = [
@@ -1898,14 +2209,17 @@ export function apply(ctx) {
     return '"' + ASRpython + '" "' + 脚本 + '" "{file}"' + (模 ? ' --模型目录 "' + 模 + '"' : '')
   }
 
-  const 路线 = (路径, handler) =>
+  const 路线 = (路径, handler, 选项 = {}) =>
     ctx.effect(() =>
       ctx.webServer.register({
         kind: 'exact',
         path: 路径,
         handler: async (req, res) => {
           try {
-            await handler(req, res)
+            // ⭐ 1.5.0：管理类接口默认只认本人；
+            //   `/receive` 是「外面往插件里推消息」的数据口，不走这道门（不然接不进来）
+            const 跑 = 选项.公开 ? handler : 只认本人(handler)
+            await 跑(req, res)
           } catch (error) {
             回(res, { ok: false, 说: String((error && error.message) || error) })
           }
@@ -1973,7 +2287,7 @@ export function apply(ctx) {
           结果们.push({ 聊天: 名, 生效: false, 说: '那间会话现在没开着（先把它打开）' })
           continue
         }
-        const 文 = 配置.人设开 ? String((行 && 行.人设) || 配置.人设 || '').trim().slice(0, 2000) : ''
+        const 文 = 配置.人设开 ? String((行 && 行.人设) || 配置.人设 || '').trim().slice(0, 20000) : ''
         const 方式 = await 备人设(agent, 会话键(会话), 文)
         if (!文) 结果们.push({ 聊天: 名, 生效: false, 说: '开关关着（或者这一条没写字）—— 已经把它撤掉了' })
         else if (方式 === 'sys') 结果们.push({ 聊天: 名, 生效: true, 说: '挂到系统提示词上了，下一轮就按它说话' })
@@ -2290,7 +2604,7 @@ export function apply(ctx) {
 
     // ⭐ 1.1.0：这一段聊天的人设（这一行自己写了就用它自己的，没写就用总的那份）
     const 人设文 = 配置.人设开
-      ? String((这条 && 这条.人设) || 配置.人设 || '').trim().slice(0, 2000)
+      ? String((这条 && 这条.人设) || 配置.人设 || '').trim().slice(0, 20000)
       : ''
     await 备人设(agent, 会话键(这间), 人设文)
 
@@ -2539,6 +2853,11 @@ export function apply(ctx) {
   const 改签名冷却毫秒 = 6 * 60 * 60 * 1000
   // ⭐ 1.0.1：唤醒消费掉之后留一条「尾巴」——同一次 QQ 触发的后续轮次还算 QQ 起的头
   const 尾巴 = new Map()       // 会话键 -> 到什么时候（毫秒时间戳）
+  // ⭐ 1.4.4：这一轮的 user 消息是**谁发起的** —— source.kind。
+  //   'qq' = 桥转进来的 / 'speak-up' = 主动搭话 / 'user' 或空 = 你自己在 DSH 窗口里打的 / 别的 = 定时任务之类。
+  //   用途：「只回 QQ 唤醒」开着时，只有**你亲手打的**那几轮才留在本地，自动触发的照样推手机。
+  const 轮来源 = new Map()     // 会话键 -> source.kind
+  const 本轮有QQ = new Map()   // 会话键 -> 这一轮里出现过 qq 来源（1.4.7：注入盖不掉它）
   // ⭐ 1.4.1：哪个群现在「接着听」（键 = 类型:号码，比如 `群:456`）→ { 剩, 到 }
   //   ⚠ 按聊天分开记（跟上面那条尾巴一个道理）：A 群被点了名，不能让 B 群也开始接听。
   //   规则在纯函数 该收这条 里，这里只存状态。
@@ -2569,7 +2888,7 @@ export function apply(ctx) {
   const 群友挂着 = new Map()
   const QqWalake窗口 = 10 * 60 * 1000
 
-  // ── 群聊的节奏（1.0.9，她 2026-10-28 定的：**只要两个数**）──
+  // ── 群聊的节奏（1.0.9：**只要两个数**）──
   //   · **隔多久**：上一次开口之后，最少隔这么多秒才允许再开口；
   //   · **一分钟最多几条**：一分钟里最多送进去几条；撞上了这批就先等着，
   //     等窗口里最早那条滑出去再送（**等，不是丢** —— 说的话不能白说）。
@@ -2624,7 +2943,7 @@ export function apply(ctx) {
   //   ⭐ 首选：挂到那间会话的**系统提示词**上 —— 不占对话、能走缓存、也不会让它每轮「演一遍」。
   //   拿不到那个服务就退回来：把人设塞进转进去的消息最前面（每轮都带）。
   //   改人设 = 先撤旧的再挂新的（清掉缓存那几百 token 是值得的，不然它还按老的说话）。
-  const 人设挂着 = new Map() // 会话键 -> { 文本, dispose }
+  const 人设挂着 = new Map() // 会话键 -> { 文本, dispose, agent }
   const 撤人设 = (键) => {
     const 旧 = 人设挂着.get(键)
     if (!旧) return
@@ -2671,7 +2990,10 @@ export function apply(ctx) {
       return 'off'
     }
     const 旧 = 人设挂着.get(键)
-    if (旧 && 旧.文本 === 文) return 'sys'
+    // ⭐ 1.4.3：缓存要**认 agent 实例** —— 会话被恢复/替换成新的 agent 之后，
+    //   文本虽然没变，但旧的那段是挂在**旧实例**上的，新实例里其实没有。
+    //   以前只比文本，于是判定「已经挂上了」直接返回，人设实际没挂到新会话上。
+    if (旧 && 旧.文本 === 文 && 旧.agent === agent) return 'sys'
     try {
       const sp = 取提示服务(agent)
       if (!sp) {
@@ -2697,7 +3019,7 @@ export function apply(ctx) {
         }
         return 'off'
       }
-      人设挂着.set(键, { 文本: 文, dispose })
+      人设挂着.set(键, { 文本: 文, dispose, agent })
       return 'sys'
     } catch (error) {
       if (!备人设.说过) {
@@ -3790,7 +4112,7 @@ export function apply(ctx) {
       required: ['reply'],
       additionalProperties: false,
     },
-    // ⚠️ 2026-10-25（她报的「门槛没生效」）：DSH 要求每个工具**必须声明 output**，
+    // ⚠️ 2026-10-25：DSH 要求每个工具**必须声明 output**，
     //    缺了就注册失败（日志里那句 `tool "qq_reply_gate" must declare output`），
     //    于是门槛工具一直没挂上、面板也看不出来。补上。
     output: {
@@ -3820,7 +4142,7 @@ export function apply(ctx) {
         唤醒时间.delete(sid)
         return { ok: true, 说: '这一轮是私聊叫的，不用判，正常回。' }
       }
-      // ⚠️ 2026-10-25（她实测）：模型有时把布尔传成字符串 "false"，严格 !== false 会判成"要正常回"。
+      // ⚠️ 2026-10-25：模型有时把布尔传成字符串 "false"，严格 !== false 会判成"要正常回"。
       //    现在两种写法都认（false / "false" / 0 / "0" 都算"不接"）。
       const 值 = args ? args.reply : undefined
       const 不接 = 值 === false || 值 === 0 || String(值).toLowerCase() === 'false' || String(值) === '0'
@@ -4374,6 +4696,37 @@ export function apply(ctx) {
     }
   }
 
+  // ⭐ 1.4.3：人设补挂心跳。
+  //   以前人设**只在「收到 QQ 消息」和「点现在就生效」那两个时刻**去挂，
+  //   所以 Harness 重启之后，如果第一个回合是定时任务 / speak-up 触发的，那一轮就没有人设。
+  //   现在跟着心跳每跳一次就补一遍：已经挂好的（同一个 agent、同一段文本）会秒返回。
+  let 人设心跳说过 = false
+  async function 人设心跳() {
+    try {
+      const 配置 = 读配置()
+      if (!配置.人设开) return
+      for (const 行 of (配置.绑定 || [])) {
+        if (行.开 === false) continue
+        const 会话 = String(行.会话 || '').trim()
+        if (!会话) continue
+        const agent = 找agent(会话)
+        if (!agent) continue // 会话没起来就不管，等它起来
+        const 文 = String(行.人设 || 配置.人设 || '').trim().slice(0, 20000)
+        if (!文) continue
+        await 备人设(agent, 会话键(会话), 文)
+      }
+      if (!人设心跳说过) {
+        人设心跳说过 = true
+        记账('人设补挂心跳已启动（重启 / 换实例之后也会自动挂回去）')
+      }
+    } catch (error) {
+      if (!人设心跳.报过) {
+        人设心跳.报过 = true
+        记账('人设补挂心跳出错：' + String((error && error.message) || error))
+      }
+    }
+  }
+
   // ⭐ 1.0.2：有攒着等的那一批时，别干等下一跳 —— 快跑一跳把它发出去。
   //   最坏情况：撞上轮询时最后一条还新鲜（< 合并窗口秒）→ 1 秒后补跑 → 大约 1.5 秒落地。
   let 补跑定时 = null
@@ -4391,6 +4744,7 @@ export function apply(ctx) {
     闸门心跳()
     群友心跳()
     空间工具心跳()
+    void 人设心跳()
     if (收消息任务) return 收消息任务
     当前控制 = new AbortController()
     // 1.0.7 的慢轮询诊断跟着实际任务；忙着的普通/补跑 tick 不重复计时。
@@ -4577,7 +4931,9 @@ export function apply(ctx) {
         if (型 === 'video') { 文们.push('[视频]'); continue }
       }
       // 用同一份判定再兜一遍（免得以后两边规则走散）
-      点名 = 点名 || 识别点名(段们, 我, 己方消息)
+      // ⭐ 1.4.4：多传一份「点名关键词」—— 正文里叫名字也算点名（留空就完全跳过）
+      点名 = 点名 || 识别点名(段们, 我, 己方消息,
+        String(配置.点名关键词 || '').split(/[\s,，、;；]+/))
       return { 文字: 文们.join(String.fromCharCode(10)).trim(), 图们, 点名 }
     }
 
@@ -4595,7 +4951,7 @@ export function apply(ctx) {
       if (信号.aborted) return
       const 键2 = 行.类型 + ':' + 行.号码
       // ⚠️ 没记录过这个聊天（比如刚加绑定 / 第一次跑）时，从**此刻**开始算 ——
-      //   否则历史消息会全被当成新的补投一遍（她报的那个「没发消息却自己回了」就有这一层）。
+      //   否则历史消息会全被当成新的补投一遍。
       let 上次 = 上次时间.has(键2) ? (上次时间.get(键2) || 0) : Math.floor(Date.now() / 1000)
 
       // ⭐ 1.0.2：这一个聊天里「攒着还没转进去」的一批（同一个人连着发的）
@@ -4629,7 +4985,7 @@ export function apply(ctx) {
             const 丢 = 攒
             攒 = null
             for (const id of 丢.ids) 已转消息.add(id)
-            上次 = Math.max(上次, 丢.末 || 上次)
+            上次 = Math.max(上次, 丢.末时 || 丢.末 || 上次)
             记账('群里这 ' + 丢.条目.length + ' 条没掷中（回复概率 ' + Number(配置.回复概率) + '%），这次不接')
             return true
           }
@@ -4707,7 +5063,7 @@ export function apply(ctx) {
         const 结果 = await 转入一条(文字2, 一批.图们, 一批.ids[一批.ids.length - 1] || 一批.ids[0], 行,
           是群行 ? null : 一批.发送者, 一批.点名, 信号, () => {
           for (const id of 一批.ids) 已转消息.add(id)
-          上次 = Math.max(上次, 一批.末 || 上次)
+          上次 = Math.max(上次, 一批.末时 || 一批.末 || 上次)
           存水位({ 键: 键2, 时间: 上次, ids: 一批.ids })
           if (是群行) 记一发(键2)
         }, '', (是群行 && 一批.条目.length === 1) ? String(一批.ids[0]) : '', 触发者)
@@ -4740,11 +5096,15 @@ export function apply(ctx) {
             const 机器人号 = await 拿自己QQ(拉JSON)
             if (机器人号 && String(条.user_id) === String(机器人号)) continue
           } catch (error) {}
-          const 自己的 = 本人号 && Number(条.user_id) === 本人号
-          if (!自己的) {
-            // ⭐ 1.1.8：这一行自己说了算（只听点名 / 全听），没说才跟全局走
-            const 全听 = 行.只听点名 == null ? Boolean(配置.群里听所有人) : !行.只听点名
-            if (!全听) {
+          // ⭐ 1.1.8：这一行自己说了算（只听点名 / 全听），没说才跟全局走
+          const 全听 = 行.只听点名 == null ? Boolean(配置.群里听所有人) : !行.只听点名
+          if (!全听) {
+            // ⭐ 1.4.3：「只听点名」对**群里所有人**生效 —— 以前自己发的会跳过这道过滤
+            //   （`自己的` 那个短路），于是在群里随手发的东西也会被当成对着它说话收进来。
+            //   例外只写在每行的「点名例外」名单里；名单里的人直接收，但**不算点名**
+            //   （不触发「点名必回」，也不消耗接听条数）。
+            const 在例外 = 在点名例外名单(行.点名例外, 条.user_id)
+            if (!在例外) {
               const 试 = await 条转片段(条)
               if (信号.aborted) return
               // ⭐ 1.4.1：点了名 → 收，并且把这个群开成「接着听」；接听中进来的普通消息也收，
@@ -4768,10 +5128,10 @@ export function apply(ctx) {
         if (信号.aborted) return
         // 纯表情（没图没字）就别转了，记掉别再反复拉
         if (!文字 && !图们.length) { 已转消息.add(条.message_id); 上次 = 条.time || 上次; continue }
-        // ⚠️ 2026-10-25（她问的）：那间会话要是**当时没开着**（死的），这条不能算「转过了」——
+        // ⚠️ 2026-10-25：那间会话要是**当时没开着**（死的），这条不能算「转过了」——
         //   否则她一会儿把它点活了，这条就永远丢了（还不会补）。
         //   所以：**真转进去了**才算数；没转进去就不动「上次」和「已转」，下一跳（4 秒后）自己再来一遍。
-        // ⚠️ 2026-10-25（她报的「打开会话就被自动回一条」）：会话关着的时候攒下的旧消息，
+        // ⚠️ 2026-10-25：会话关着的时候攒下的旧消息，
         //    隔太久（默认 10 分钟）就别补投了 —— 否则她一点进那间屋，就会突然冒出一条「自动回复」。
         const 太旧 = (条.time || 0) > 0 && (Math.floor(Date.now() / 1000) - 条.time) > (Number(配置.补投窗口分) || 10) * 60
         if (太旧) {
@@ -4794,11 +5154,31 @@ export function apply(ctx) {
           if (信号.aborted) return
           if (!好) break
         }
+        // ⭐ 1.4.7：窗口按**本机第一次看到这条消息的时刻**算。
+        //   以前用 `条.time`（QQ 服务器时间戳）：服务器比本机快一点，差就是负的，
+        //   落袋里 `差 >= 0` 不成立 ⇒ 永远不合并。
+        //   ⚠ 但不能直接用 `Date.now()`：每一跳都会把这一批重新读一遍，
+        //   那样"最后一条"永远是刚刚，窗口永远等不到头。所以要记「第一次见到它的时间」。
+        const 收到秒 = Math.floor(Date.now() / 1000)
+        // ⚠ 本来就已经是旧消息（服务器时间戳比现在早）→ 用它的时间，这种不该再等窗口；
+        //   未来时间戳（服务器比本机快）取不到就退回本机现在，免得差值为负、永远不合并。
+        const 条时 = Number(条.time) > 0 ? Number(条.time) : 收到秒
+        const 初见估 = Math.min(收到秒, 条时)
+        if (!见时.has(条.message_id)) 见时.set(条.message_id, 初见估)
+        const 初见 = 见时.get(条.message_id) || 初见估
+        if (见时.size > 500) {   // 别无限长大：超了就丢最老的一半
+          const 键们 = [...见时.keys()]
+          for (const k of 键们.slice(0, 键们.length - 250)) 见时.delete(k)
+        }
         if (!攒) {
           攒 = {
             条目: [], 图们: [], ids: [], 点名: false, 发送者,
-            起: 条.time || 0, 末: 条.time || 0,
+            起: 初见, 末: 初见, 末时: 条时,   // 末 = 本机初见（算窗口）；末时 = 消息自己的时间（算水位）
           }
+        } else {
+          攒.起 = Math.min(攒.起, 初见)
+          攒.末 = Math.max(攒.末, 初见)
+          攒.末时 = Math.max(攒.末时 || 0, 条时)
         }
         // ⭐ 1.2.0：私聊默认不标来源；开了就给它一个能一眼认出的标记
         let 这行文字 = 文字
@@ -4820,7 +5200,6 @@ export function apply(ctx) {
         if (图们.length) 攒.图们.push(...图们)
         攒.ids.push(条.message_id)
         攒.点名 = 攒.点名 || Boolean(点名)
-        攒.末 = 条.time || 攒.末
         if (!(Number(配置.合并窗口秒) > 0)) {
           const 好 = await 落袋()
           if (信号.aborted) return
@@ -4847,6 +5226,8 @@ export function apply(ctx) {
     存水位()
   }
 
+  // ⚠ `公开: true` —— 这是「外面往插件里推消息」的数据口（脚本 / 转发器调它），
+  //   不是设置页的管理接口，别拿登录校验去拦它。
   路线(`${路由前缀}/receive`, async (req, res) => {
     const 来 = await 读体(req)
     const 文字 = typeof 来.text === 'string' ? 来.text.trim() : ''
@@ -4865,7 +5246,58 @@ export function apply(ctx) {
     const 行 = (读配置().绑定 || []).find((b) => String(b.类型) === 类型 && String(b.号码) === 号码) || null
     if (!行) return 回(res, { ok: false, 说: `没有绑定这个聊天（${类型} ${号码}），先去「绑定」页加一条` })
     回(res, await 转入一条(文字, [], '', 行, undefined, true))
-  })
+  }, { 公开: true })
+
+  /**
+   * ⭐ 1.5.0（issue #29）：收**通知类事件**（戳一戳这种）。
+   *
+   * 为什么以前收不到：插件的收消息是**轮询历史消息**，而「戳一戳」不是消息，
+   *   OneBot 那边只通过 **HTTP 上报（POST）** 推出来 —— 拉历史永远拉不到。
+   *
+   * 用法：把 NapCat / SnowLuma 的「HTTP 上报」地址指到
+   *   `http://127.0.0.1:<DSH 端口>/dsh-qq-bridge/notice`（口令非空时再加 `?token=xxx`）。
+   *   ⚠ 上报会把**所有**事件都推过来，我们**只认 notice**，其它一律忽略 ——
+   *     不然消息会跟轮询重复，一条话进来两次。
+   */
+  const 通知去重 = new Map()   // 事件指纹 -> 时间（只留最近 200 条）
+  路线(`${路由前缀}/notice`, async (req, res) => {
+    const 配置 = 读配置()
+    if (!配置.收通知) return 回(res, { ok: false, 说: '「收通知」关着，先在设置里打开' })
+    const 口令 = String(配置.通知口令 || '').trim()
+    if (口令) {
+      let 给 = String(((req && req.url) || '').match(/[?&]token=([^&]*)/)?.[1] || (req && req.headers && req.headers['x-token']) || '')
+      try { 给 = decodeURIComponent(给) } catch (error) {}
+      if (给 !== 口令) return 回(res, { ok: false, 说: '口令不对' })
+    }
+    const 来 = await 读体(req)
+    if (!来 || 来.post_type !== 'notice') {
+      // ⭐ 必须明确忽略：HTTP 上报会把 message 事件也推过来，那些轮询已经收了
+      return 回(res, { ok: true, 说: '只转 notice 类事件；其它（消息）交给轮询，不重复转' })
+    }
+    const 类 = String(来.notice_type || '')
+    const 群号 = Number(来.group_id) || 0
+    const 谁 = Number(来.user_id) || 0
+    const 指纹 = 类 + ':' + 群号 + ':' + 谁 + ':' + Number(来.time || 0)
+    const 现 = Date.now()
+    if (通知去重.has(指纹)) return 回(res, { ok: true, 说: '这条刚收过，跳过' })
+    通知去重.set(指纹, 现)
+    if (通知去重.size > 200) for (const [k, t] of 通知去重) if (现 - t > 600000) 通知去重.delete(k)
+
+    if (类 !== 'poke') return 回(res, { ok: true, 说: `「${类}」这类通知暂时不转（现在只转戳一戳）` })
+
+    // 找到对应的那一条绑定（群按群号、私聊按对方的号）
+    const 这条 = (配置.绑定 || []).find((b) => (群号
+      ? b.类型 === '群' && Number(b.号码) === 群号
+      : b.类型 === '私聊' && Number(b.号码) === 谁)) || null
+    if (!这条 || 这条.开 === false) return 回(res, { ok: false, 说: '这个聊天没绑定（或者那一行关着）' })
+
+    const 来源 = 群号 ? 'QQ群 ' + 群号 + '·戳一戳' : 'QQ私聊·戳一戳'
+    const 正文 = 群号 ? '（戳一戳）群里有人戳了你一下' : '（戳一戳）对方戳了你一下'
+    const 结果 = await 转入一条(正文, [], 来.time || 现, 这条, { 昵称: '', 号码: 谁 },
+      false, undefined, undefined, 来源)
+    记账('收到 ' + 来源 + ' → ' + (结果 && 结果.ok ? '转进会话了' : String((结果 && 结果.说) || '没转成')))
+    回(res, 结果)
+  }, { 公开: true })
 
   // 手动试一发：**真发**（绕过试运行），只发一条固定测试句，动不了已发轮
   路线(`${路由前缀}/test-send`, async (req, res) => {
@@ -4958,6 +5390,7 @@ export function apply(ctx) {
     记唤醒: (会话, 类型, 点名) => 唤醒时间.set(会话键(会话), { 时: Date.now(), 类型: String(类型 || '群'), 点名: Boolean(点名) }),
     清唤醒: (会话) => 唤醒时间.delete(会话键(会话)),
     清尾巴: (会话) => 尾巴.delete(会话键(会话)),
+    清来源: (会话) => { 轮来源.delete(会话键(会话)); 本轮有QQ.delete(会话键(会话)) },
     有尾巴: (会话) => Boolean((尾巴.get(会话键(会话)) || 0) > Date.now()),
     接听: (群号) => 接听中.get('群:' + String(群号)) || null,
     记己方: (id) => 记己方消息(id),

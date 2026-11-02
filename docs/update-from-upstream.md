@@ -1,6 +1,6 @@
 # 合并上游更新
 
-`vendor/dsh-qq-bridge` 是上游的本地分叉：**上游 1.4.2 + 本地补丁**。上游还在动，
+`vendor/dsh-qq-bridge` 是上游的本地分叉：**上游 1.5.0 + 本地补丁**。上游还在动，
 所以要能反复合并。这份记的是**怎么做**，以及**踩过的坑**。
 
 ## 为什么不用 `git pull`
@@ -17,13 +17,14 @@ theirs = 上游 main
 ## 步骤
 
 ```bash
-# 0) 记下 base。第一次是 6731c022（1.1.2）。以后每次合并完，把 base 更新成当时的 theirs。
-BASE=6731c022
+# 0) 记下 base。第一次是 6731c022（1.1.2）；2026-11-02 合到 1.5.0 后是 1c85658。
+#    以后每次合并完，把 base 更新成当时的 theirs。
+BASE=1c85658
 UP=/tmp/dsh-qq-bridge-new
 WORK=/tmp/qqbridge-merge
 
 # 1) 拿上游
-rm -rf "$UP" && git clone --depth 50 https://github.com/Yuuyuko-uu/dsh-qq-bridge "$UP"
+rm -rf "$UP" && git clone https://github.com/Yuuyuko-uu/dsh-qq-link "$UP"   # 旧名 dsh-qq-bridge 会重定向
 
 # 2) 建临时仓：base 之上，放我们的样子
 rm -rf "$WORK" && cp -a "$UP" "$WORK" && cd "$WORK"
@@ -89,20 +90,30 @@ cd ~/agents/QQ_ds && git add -A && git commit -m "合并上游 <版本>"
 | 日期 | 从 → 到 | 冲突 | 备注 |
 |---|---|---|---|
 | 2026-10-30 | 1.1.2 (`6731c022`) → 1.4.2 | 4 处 | ① fs import 并集 ② 收消息入口三个心跳都调 ③ 群聊节奏：一律排队 + 热度放宽 ④ 自己号 → 改用上游 `拿自己QQ`，删掉本地那版 |
+| 2026-11-02 | 1.4.2 (`93aa874`) → 1.5.0 (`1c85658`) | 10 处 | ① fs/path import 并集 ② 「抓歌名」+ 上游「按句拆」两个都留 ③ `落地一发` 形参加我们的 `引用id` + 上游的 `是本地手打`（调用处同步） ④ turn/start 注释用上游 ⑤ 触发/引用收尾 + 轮来源收尾并集 ⑥ 静默标记改用上游 1.4.8 的 `这轮静默`（我们那两条 + 一段死代码删掉） ⑦ 表情菜单留我们的 ⑧ `/receive` 精确路由 + 上游新 `/notice` 并集。**补丁 75 → 72**（少的三条都查过：两条上游正式修了同一个 bug、一条死代码） |
 
-## 还没合的：1.4.3（`d5a034c`）
+## 本地偏差：包名不跟上游改
 
-**有实质代码改动，不是只改许可**，其中一条是安全相关的：
+上游 1.4.3 起把 npm 包名改成 `dsh-qq-link`，**我们保留 `dsh-qq-bridge`**。
+原因：DSH 的 `dsh-client-modules` 校验 `package.json.name === loader specifier`，而本机
+profile（`~/.dsh/profiles/web/package.json`）里那条依赖和 bundles 一直叫 `dsh-qq-bridge`。
+改 profile 要同时动依赖 key、`pnpm-lock.yaml` 和 `node_modules` 软链，风险更大，没必要。
+`cordis.patch.yml` 的 `name` 也保持 `dsh-qq-bridge`。路由前缀 `/dsh-qq-bridge` 和数据文件名
+同理保持旧名（上游自己也是这么做的，改名会丢数据）。
+**下次合并若在这几行冲突，按旧名保留。**
 
-- **「只听点名」对群里所有人生效** —— 去掉了「自己发的话绕过过滤」的捷径。
-  我们本地也有一条同目的的补丁（跳过机器人自己发的消息），合并时要看清谁覆盖谁。
-- 每行新增「不受点名限制的 QQ」名单。
-- 长回复可选按句子拆（默认关；括号里的标点不算断句）。
-- 人设三处：2000 字上限放宽到 2 万字、跟着心跳补挂（重启后定时任务触发的回合也有人设）、
-  缓存认 agent 实例。**「跟着心跳补挂」跟我们那条「投递前补挂工具」是同一类问题的两种解法**，
-  合并时要挑一个。
+## 合并进来、但暂时关着的新能力
 
-合的时候按上面流程走，`BASE` 用 `6731c022`（上次对齐的点不变）。
+- **正文里的文件链接会真的上传文件**（1.4.5+）：上游接受任意绝对路径，只检查「存在 / 是
+  文件 / ≤50MB」。**本地补丁已加 `文件根目录` 白名单**（`[本地补丁 2026-11-02]`：留空 =
+  一个文件都不发；对 realpath 之后的真路径比前缀，防 `../` 和软链）。本机另外把 `发文件`
+  设为 `false`。要开启：先填 `文件根目录`（逗号分隔），再打开 `发文件`。
+- **`/notice` 路由**（1.5.0，收戳一戳的 HTTP 上报）：只认 `notice_type === 'poke'`，而
+  NapCat 实际发的是 `notice_type: 'notify'` + `sub_type: 'poke'`；也没有 `target_id` /
+  self 过滤和冷却。**保持 `收通知: false`，继续走 `tools/qq-events.py`**，等上游修。
+- **管理接口只认本人**（1.5.0）：`/dsh-qq-bridge/state` 等本机 curl 会回
+  `authentication_required`（设置页同源请求正常）；`/receive`、`/notice` 标了
+  `{ 公开: true }`，不受影响。
 
 ## 合并之后的 base
 

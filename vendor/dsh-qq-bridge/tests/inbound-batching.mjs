@@ -88,6 +88,32 @@ await check('merge window schedules a fast tick that flushes once and persists e
   assert.deepEqual(f.state().已转, [1, 2]); await a.tick(); assert.equal(a.calls.length, 1)
 })
 
+// ⭐ 1.4.7：窗口按「本机第一次看到它」的时间算，所以两条相隔 2 秒、窗口 3 秒也能合上。
+await check('a 3s window still merges two messages seen 2s apart', async f => {
+  f.configure({ 合并窗口秒: 3 })
+  f.messages([f.message(1)])
+  const a = f.mount(); await a.tick()
+  assert.equal(a.calls.length, 0)
+  f.advance(2000)
+  f.messages([f.message(1), f.message(2)])    // 下一跳又读到第一条 + 新来的一条
+  await a.tick()
+  assert.equal(a.calls.length, 0, '还在窗口里，不该发')
+  f.advance(3200)                              // 距最后一条第一次被看到已经 3.2 秒
+  await f.fireFast(); await settle()
+  assert.equal(a.calls.length, 1)
+  assert.match(a.calls[0].content[0].text, /synthetic-1\nsynthetic-2/)
+})
+
+// ⭐ 1.4.7：QQ 服务器时间比本机快（时间戳在未来）也不该把窗口弄废 —— 判据已经不看它了。
+await check('a future server timestamp does not break batching', async f => {
+  f.configure({ 合并窗口秒: 3 })
+  f.messages([f.message(1, { age: -600 })])    // time 比本机快 10 分钟
+  const a = f.mount(); await a.tick()
+  assert.equal(a.calls.length, 0, '未来时间戳不该让它立刻发')
+  f.advance(3200); await f.fireFast(); await settle()
+  assert.equal(a.calls.length, 1)
+})
+
 for (const first of ['regular', 'fast']) await check(`${first} tick owns the same pending task when fast and regular polling overlap`, async f => {
   const a = f.mount(); await a.tick(); f.advance(2000)
   const historyGate = deferred(); f.fetch(url => url.endsWith('_msg_history') ? historyGate.promise : f.defaultFetch(url))

@@ -7,7 +7,7 @@
 // ⚠ 这里不碰会话、不发消息，只是往宿主那几条 /dsh-qq-bridge/* 路由上读写。
 
 window.__ModuleLoader__.load({
-  id: 'dsh-qq-bridge',
+  id: 'dsh-qq-link',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -267,6 +267,25 @@ window.__ModuleLoader__.load({
           行('试运行', 勾(配置.试运行, (v) => 改('试运行', v)), '开着只记账、不真发到 QQ。想先看记录就开着它。'),
           行('手机只收「人话」（不发代码/路径）', 勾(配置.只发标记内, (v) => 改('只发标记内', v)), '开着时：只有它写在 [QQ] 这里 [/QQ] 中间的话会发到手机；代码、文件路径、分析过程都留在电脑上，不往手机上推。开之前先让它知道这个写法 —— 开着时转进去的消息会自动提醒它。'),
           行('只回 QQ 叫醒的那一轮', 勾(配置.只回QQ唤醒, (v) => 改('只回QQ唤醒', v)), '开着时：你在 QQ 问一句它回一句；你坐在 DSH 界面里自己聊的，不推到手机。'),
+          行('自动触发的也发（主动搭话 / 定时任务）', 勾(配置.自动触发也发, (v) => 改('自动触发也发', v)), '上面那个开着的时候，主动搭话、到点刷 B 站这类「它自己起的头」要不要也推到手机。关着 = 只有 QQ 叫醒的那几轮才发（跟以前一样）；开着 = 那几种也发。⚠ 你自己在窗口里打的字，两种情况都不会发。'),
+          行('正文里叫这些名字也算点名', h('input', {
+            style: S.wide,
+            value: String(配置.点名关键词 || ''),
+            placeholder: '留空 = 只认 @ 和引用',
+            onChange: (e) => 改('点名关键词', e.target.value),
+          }), '群里有人直接说「让它帮我干活」「去问问它」，既没 @ 也没引用 —— 出现这些词就当点名，直接进来，不再靠概率掷骰子。多个用逗号或空格隔开；留空就是关着（跟以前一样）。'),
+          // ⭐ 1.5.0（issue #29）：戳一戳这类通知 —— 它们不是消息，拉历史拉不到，只能让 OneBot 主动推
+          行('收「戳一戳」这类通知', 勾(配置.收通知, (v) => 改('收通知', v)),
+            '「戳一戳」不是消息，轮询历史永远拉不到，只能让 OneBot 主动上报（HTTP 上报）。'
+            + '开之前先把 NapCat / SnowLuma 的「HTTP 上报」地址指到本机这个插件：'
+            + 'http://127.0.0.1:<DSH 端口>' + B + '/notice —— 详见 README「收戳一戳」那一节。'
+            + '⚠ 上报会把所有事件都推过来，这里**只认 notice**，消息照旧走轮询，不会重复。'),
+          行('上报口令（选填）', h('input', {
+            style: S.wide,
+            value: String(配置.通知口令 || ''),
+            placeholder: '留空 = 不要口令',
+            onChange: (e) => 改('通知口令', e.target.value),
+          }), '填了就要求上报地址带 ?token=这个口令；留空 = 谁都能往这个地址推（只在本机用的话无所谓）。'),
         ),
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '现在的绑定（' + 绑定.length + ' 条）'),
@@ -380,6 +399,19 @@ window.__ModuleLoader__.load({
                       按钮('清空', () => 改绑定(i, { 人设: '' }), false, false),
                       h('span', { style: S.dim }, '　'),
                       按钮('收起', () => 设人设行(null), false, false)))
+                : null,
+              // ⭐ 1.4.3：这个群里「不听点名也直接收」的 QQ 号。
+              //   「只听点名」一开，群里**所有人**（包括自己）都要点名才收；这里列出来的号例外。
+              x.类型 === '群' && (x.只听点名 == null ? !配置.群里听所有人 : Boolean(x.只听点名))
+                ? h('div', { style: { margin: '0 0 8px' } },
+                    h('div', { style: { ...S.dim, marginBottom: 3 } },
+                      '不受点名限制的 QQ（逗号或空格分隔，留空 = 群里全都要点名）'),
+                    h('input', {
+                      style: { ...S.inp, display: 'block', width: '100%', boxSizing: 'border-box' },
+                      value: String(x.点名例外 || ''),
+                      placeholder: '例如 3274796953',
+                      onChange: (e) => 改绑定(i, { 点名例外: e.target.value }),
+                    }))
                 : null))),
           h('div', { style: { marginTop: 8 } },
             按钮('+ 加一条', 加绑定, false, false),
@@ -415,6 +447,7 @@ window.__ModuleLoader__.load({
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '发出去的样子'),
           行('长回复拆成几条发', 勾(配置.长回复拆段, (v) => 改('长回复拆段', v)), '开着（默认）：按空行拆成几条、像真人一条条发。关掉：一整段只发一条，不会刷屏。'),
+          行('按句子拆（不是按空行）', 勾(配置.按句拆, (v) => 改('按句拆', v)), '开着：一个句号/问号/感叹号算一条，更像人一条条打字。括号里的标点不切。默认关（关着就还是按空行拆）。'),
           行('每段之间隔（毫秒）', h('input', { type: 'number', min: 0, max: 5000, style: S.small, value: String(配置.拆段间隔毫秒 ?? 450), onChange: (e) => 改('拆段间隔毫秒', Number(e.target.value)) }), '只在「拆成几条」开着时有用。默认 450。'),
         ),
         h('div', { style: S.card },
@@ -431,6 +464,13 @@ window.__ModuleLoader__.load({
           行('单张最大（MB）', h('input', { type: 'number', min: 1, max: 30, style: S.small, value: String(配置.图上限MB ?? 5), onChange: (e) => 改('图上限MB', Number(e.target.value)) }), '超过就跳过（两个方向都按这个）。'),
           行('图片根目录', h('input', { style: S.wide, placeholder: '（留空就行：自动用会话所在的工作区）', value: String(配置.图片根目录 || ''), onChange: (e) => 改('图片根目录', e.target.value) }), '一般不用填。它正文里写 ![名字](相对路径) 时先按这个目录找。'),
           h('div', { style: S.dim }, '收进来的图会存一份到 %USERPROFILE%\\.dsh\\qq-bridge-inbox\\，文字里会带上路径。'),
+        ),
+        h('div', { style: S.card },
+          h('div', { style: { ...S.h, margin: '0 0 8px' } }, '文件'),
+          行('发文件（它 → QQ）', 勾(配置.发文件, (v) => 改('发文件', v)), '它这一轮正文里写了 [报告](D:\\x\\报告.docx) 这种链接，就把那个文件传到 QQ。图片那种 ![名](路径) 不算文件。'),
+          行('单个文件最大（MB）', h('input', { type: 'number', min: 1, max: 2048, style: S.small, value: String(配置.文件上限MB ?? 50), onChange: (e) => 改('文件上限MB', Number(e.target.value)) }), '超过就只发一句话说明，不硬传。QQ 自己也有单文件上限，太大那边会拒。'),
+          行('只往私聊发（群里不发文件）', 勾(配置.文件仅私聊 !== false, (v) => 改('文件仅私聊', v)), '默认开。大群里发文件容易出问题（群文件权限、刷屏、审核），私聊最稳。关掉之后群里也会传。'),
+          h('div', { style: S.dim }, '路径带空格就用尖括号：[报告](<D:\\我的 文档\\报告.docx>)。网页链接不会被当成文件。'),
         ),
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '语音转写（QQ 语音条 → 文字）'),
@@ -632,6 +672,18 @@ window.__ModuleLoader__.load({
         设更新忙(false)
         设说(!r ? '查不到（网络）' : r.hasUpdate ? '有新版本 v' + r.latest : r.ok ? '已经是最新版' : '查不到：' + (r.error || '网络'))
       }
+      // ⭐ 2026-11-01：查到新版就一键装（宿主的 pluginManager.installBundle）
+      const 一键更新 = async () => {
+        设更新忙(true)
+        设说('正在装…')
+        try {
+          const r = await post('/install', {})
+          设说(r && r.ok ? '已经开始装了 —— 装完重启（或重载）一次 dsh 才生效' : '没装成：' + ((r && r.error) || '不知道原因'))
+        } catch (e) {
+          设说('没装成：' + ((e && e.message) || e))
+        }
+        设更新忙(false)
+      }
       const 更新页 = h('div', null,
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '检查更新'),
@@ -642,9 +694,10 @@ window.__ModuleLoader__.load({
           h('div', { style: { marginTop: 6 } }, 按钮(更新忙 ? '查…' : '检查更新', 查更新, false, 更新忙)),
           更新 && 更新.hasUpdate
             ? h('div', { style: { marginTop: 8 } },
-              h('div', { style: S.dim }, '更新方法：先卸旧版再装新版（直接装可能拿到缓存里的旧副本）。'),
-              h('div', { style: S.日志行 }, ['dsh plugin --profile web remove dsh-qq-bridge', 'dsh plugin --profile web add dsh-qq-bridge'].join(String.fromCharCode(10))),
-              按钮('复制命令', () => navigator.clipboard.writeText(['dsh plugin --profile web remove dsh-qq-bridge', 'dsh plugin --profile web add dsh-qq-bridge'].join(String.fromCharCode(10))).then(() => 设说('命令已复制')).catch(() => 设说('复制不了，手动选中吧')), false, false))
+              (更新 && 更新.canInstall)
+                ? 按钮(更新忙 ? '装…' : '一键更新到 v' + 更新.latest, 一键更新, false, 更新忙)
+                : h('div', { style: S.dim }, '这是本地开发副本（link: 进来的），请手动更新。'),
+              h('div', { style: S.dim }, '装完重启（或重载）一次 dsh 才生效。'))
             : null,
         ),
       )

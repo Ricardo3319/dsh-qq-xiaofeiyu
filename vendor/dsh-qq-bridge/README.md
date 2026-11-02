@@ -1,4 +1,4 @@
-# 通到 QQ（dsh-qq-bridge）
+# 通到 QQ（dsh-qq-link）
 
 让 DSH 里的 **AI 伙伴**和 QQ 连起来：它在 DSH 里说完话，自动发到 QQ。
 
@@ -45,7 +45,7 @@
 真遇到新版对不上（比如 DSH 刚升级、插件还没跟上），提个 issue，作者会跟着改。
 
 实测对照 / 兼容范围看 [`package.json`](package.json) 里的 `engines` 和 `dsh.compatibility`；
-这一版改了什么看 [CHANGELOG.md](CHANGELOG.md)，发版记录看 [Releases](https://github.com/Yuuyuko-uu/dsh-qq-bridge/releases)。
+这一版改了什么看 [CHANGELOG.md](CHANGELOG.md)，发版记录看 [Releases](https://github.com/Yuuyuko-uu/dsh-qq-link/releases)。
 这里不写死版本号 —— 文档里钉一个数，过两天就对不上了。
 
 ## 装
@@ -57,13 +57,13 @@
 打开 **设置 → 插件 → 安装**，把这一行填进去：
 
 ```
-github:Yuuyuko-uu/dsh-qq-bridge
+github:Yuuyuko-uu/dsh-qq-link
 ```
 
 或者命令行（`--profile` 照你平时那个写，桌面端一般 `desktop`，网页端 `web`）：
 
 ```bash
-dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-bridge
+dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-link
 ```
 
 装完**重启一次 DSH**，然后进 **设置 → 通到 QQ**。
@@ -72,7 +72,7 @@ dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-bridge
 > 没装 git 会报 `ERR_PNPM_GIT_FETCH_FAILED`。这种情况改用 **tarball 直链**，不用 git：
 >
 > ```bash
-> dsh plugin --profile desktop add https://codeload.github.com/Yuuyuko-uu/dsh-qq-bridge/tar.gz/refs/heads/main
+> dsh plugin --profile desktop add https://codeload.github.com/Yuuyuko-uu/dsh-qq-link/tar.gz/refs/heads/main
 > ```
 >
 > （设置 → 插件 → 安装 那个框里也可以直接填这行地址。）
@@ -128,8 +128,8 @@ $p = "把上面 BOM=True 那一行的路径粘到这里"
 命令行（`--profile` 照你平时那个写，桌面端一般 `desktop`、网页端 `web`）：
 
 ```bash
-dsh plugin --profile desktop remove dsh-qq-bridge
-dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-bridge
+dsh plugin --profile desktop remove dsh-qq-link
+dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-link
 ```
 
 > ⚠️ **必须先卸再装**：直接装可能拿到缓存里的旧副本，装完还是老的。
@@ -202,11 +202,37 @@ dsh plugin --profile desktop add github:Yuuyuko-uu/dsh-qq-bridge
 - 连不上 / 10 秒没回 / 后端拒绝，三种说法不一样，看它回的那句话就知道是哪一种。
 - 工具只挂在**绑了 QQ 的会话**上；没绑 QQ 的会话里看不见它们。
 
+## 收「戳一戳」（可选）
+
+戳一戳、加群、撤回这些叫**通知事件**，它们**不是消息** —— 插件收消息靠轮询历史，
+而历史里永远没有「谁戳了你一下」。所以这类只能让 QQ 后端**主动推过来**。
+
+想收的话两步：
+
+1. **设置页 →「收「戳一戳」这类通知」打开**（默认关）。
+2. 把后端（NapCat / SnowLuma）的 **HTTP 上报** 地址指到：
+
+   ```
+   http://127.0.0.1:<DSH 的端口>/dsh-qq-bridge/notice
+   ```
+
+   端口就是浏览器打开 DSH 时那个地址里的端口。设置页里那行说明会把它写全。
+   填了「上报口令」的话，地址后面再加 `?token=你的口令`。
+
+说清三件事：
+
+- **只转「戳一戳」**。加群、退群、撤回这些暂时不转 —— 先看戳一戳这条通不通。
+- 上报会把**所有**事件都推过来（包括消息），插件**只认 `notice`**，
+  消息照旧走轮询 —— **不会重复转两次**。
+- 上报是**单向**的：它推给插件，插件不用回调它。所以配错了不会影响原来收发消息。
+
 ## 现在就能用的接口
 
 - `GET /dsh-qq-bridge/state` —— 配置、日志、会话清单、以及「连着的 QQ 是哪个号/昵称」。
 - `POST /dsh-qq-bridge/save` —— 存配置（body 里给要改的键）。
 - `POST /dsh-qq-bridge/test-send` —— **真发**测试句（绕过试运行）。
+- `POST /dsh-qq-bridge/notice` —— 收 QQ 后端推上来的通知事件（要打开「收通知」）。
+- `POST /dsh-qq-bridge/receive` —— 本机别的东西往会话里灌一句话（不是 QQ 来的）。
 
 ## 自测（不装插件也能跑）
 

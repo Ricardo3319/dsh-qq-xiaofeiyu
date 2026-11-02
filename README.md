@@ -3,8 +3,8 @@
 把 DeepSeek Harness（DSH）里的 AI 伙伴接到 QQ 上，让它像一个群里的人那样说话 —— 会潜水、
 会贴表情、会戳回去、会记人、会记事，**听得懂语音条、也能用语音回话**。
 
-这套是在 [`Yuuyuko-uu/dsh-qq-bridge`](https://github.com/Yuuyuko-uu/dsh-qq-bridge) 的基础上
-改出来的本地副本（上游 1.4.2 + 75 处本地补丁 + 3 个自写模块），用
+这套是在 [`Yuuyuko-uu/dsh-qq-link`](https://github.com/Yuuyuko-uu/dsh-qq-link)（原仓库名
+`dsh-qq-bridge`）的基础上改出来的本地副本（上游 1.5.0 + 72 处本地补丁 + 3 个自写模块），用
 [NapCat](https://github.com/NapNeko/NapCatQQ) 当协议端，模型走本地网关。
 
 ```
@@ -24,7 +24,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 
 | 路径 | 是什么 |
 |---|---|
-| `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.4.2 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释 |
+| `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.5.0 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释。⚠ 本地包名仍叫 `dsh-qq-bridge`（上游已改名 `dsh-qq-link`）—— 见文末许可一节 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `autostart on\|off`。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
@@ -32,7 +32,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
 | `docs/voice.md` | **语音两个方向**：语音条转文字（SenseVoice）、文字转语音条（edge-tts + `qq_voice`）、唱歌（DiffSinger + `qq_sing`）、学歌（哼唱量音高 + `qq_learn_song`）、找谱（联网找谱 + `qq_find_score`）、依赖与坑 |
 | `docs/qq-sing-melodies.example.json` | 唱歌自定义曲目的示例：简谱字符串或音名列表，放到 `~/.dsh/qq-sing/melodies.json` |
-| `docs/upstream-issue-gate-leak.md` | 门槛吞掉下一轮那个 bug 的复现与补丁（已提 [PR #27](https://github.com/Yuuyuko-uu/dsh-qq-bridge/pull/27)） |
+| `docs/upstream-issue-gate-leak.md` | 门槛吞掉下一轮那个 bug 的复现与补丁（已提 [PR #27](https://github.com/Yuuyuko-uu/dsh-qq-link/pull/27)） |
 | `docs/qq-plugins.html` | DSH 生态里 58 个 QQ 相关插件的分类清单 |
 | `docs/research-memory-style.html` | 群聊记忆 / 风格 / 表情包的调研 |
 
@@ -135,7 +135,13 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 
 ## 上游与许可
 
-- 桥：[`Yuuyuko-uu/dsh-qq-bridge`](https://github.com/Yuuyuko-uu/dsh-qq-bridge)（MIT）。
-  `vendor/dsh-qq-bridge/LICENSE` 是上游原文，改动处都带 `[本地补丁]` 注释。
+- 桥：派生自 [`Yuuyuko-uu/dsh-qq-link`](https://github.com/Yuuyuko-uu/dsh-qq-link)（原作者
+  **Yuuyuko-uu**；原仓库名 `dsh-qq-bridge`）。许可为 **Yuuyuko-uu 插件许可 1.2** ——
+  1.4.3 起从 MIT 换成它，要求署名、禁止声称原创。`vendor/dsh-qq-bridge/LICENSE` 是上游
+  原文，**请完整保留**；本项目在此基础上做了 72 处本地补丁（改动处都带 `[本地补丁 日期]`
+  注释），衍生作品继续按同许可或更严格的许可分发。
+- **本地包名为什么还叫 `dsh-qq-bridge`**：DSH 会校验 `package.json.name === profile 里的
+  specifier`，而本机 profile 里那条依赖一直叫 `dsh-qq-bridge`。路由前缀 `/dsh-qq-bridge`
+  和 `qq-bridge-*.json` 数据文件名也保持旧名 —— 上游同样是故意保留的，改名会丢数据。
 - 桥的周边（心情 / 记忆 / 主动搭话 / 朗读桥）都是同一个作者，从 npm 装，不在本仓库。
 - `docs/` 下的两份调研与清单是这个项目自己的产出。
