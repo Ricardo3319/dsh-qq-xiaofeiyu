@@ -8,7 +8,7 @@
 //
 // ⚠ 安全默认：总开关 = false、试运行 = true —— 不手动打开，一句都不会真的发到 QQ。
 
-import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,6 +63,21 @@ const 默认配置 = {
   转写命令: '', // 模板，里面必须带 {file}；例如：python D:sr.py "{file}"
   语音模型目录: '', // 语音模型放哪（SenseVoice 的 model.int8.onnx + tokens.txt 所在目录）
   转写超时秒: 60,
+  // [本地补丁 2026-10-31] 出站语音（文字 → QQ 语音条）。跟上面的转写是两件事：
+  //   转写 = QQ → 文字；这里 = 文字 → QQ。默认开，但只能由模型显式调 qq_voice 触发，
+  //   不会「每条回复都发语音」—— 群里连发语音条很吵，QQ 对语音也有风控。
+  允许发语音: true,
+  语音音色: 'zh-CN-XiaoyiNeural', // edge-tts 的中文女声；见 tools/qq_tts.py
+  语音合成命令: '', // 想换别的 TTS 就填：命令 + 参数，用 {out} 占位；文字从 stdin 读。留空 = 用内置 edge-tts
+  语音合成超时秒: 60, // 自定义 TTS（比如 F5-TTS 克隆）加载模型慢，别用 30 秒卡它
+  语音冷却秒: 30, // 两次语音之间至少隔多久（按整个 QQ 号算，防刷）
+  // [本地补丁 2026-10-31] 唱歌（DiffSinger）。跟「发语音」共用冷却和每轮一条的限制；
+  //   默认关，等声库和推理环境装好、实测过再打开。
+  允许唱歌: false,
+  唱歌解释器: '', // 留空 = <DSH_HOME>/qq-sing/.venv/bin/python
+  唱歌声库: '', // 留空 = <DSH_HOME>/qq-sing/voicebanks/hutao
+  唱歌旋律: '小星星',
+  唱歌步数: 50, // 声学扩散步数；越大越慢、细节越多。50 是上游 CLI 默认，短歌约 9 秒
   补投窗口分: 10, // 会话关着期间攒下的消息，超过这么多分钟就不再补投
   // ⭐ 2026-10-25（QQ 桥用户反馈「一次回一堆消息」）：长回复按空行拆成几条连发，以前是写死的。
   长回复拆段: true, // 关掉 = 一整段只发一条消息（不再刷屏）
@@ -342,7 +357,9 @@ async function 转成wav(路径, ffmpeg, 家目录, 名) {
 }
 
 /** 一条 QQ 语音 → 文字。插件只做三件事：拿到音频 → 交给命令 → 拿回文字。
- *  ⚠️ 没配命令、或者没开开关，就退化成 `[语音]` 三个字（跟以前一样）。 */
+ *  ⚠️ 没配命令、或者没开开关，就退化成 `[语音]` 三个字（跟以前一样）。
+ *  [本地补丁 2026-11-01] 顺手把落下来的音频记进 语音文件表 / 最后语音 ——
+ *    学歌工具（qq_learn_song）要拿它量音高，不然「哼一遍教我唱」就没料可用。 */
 async function 转写语音(段, 拉任意, 配置, 选项 = {}) {
   const 模板 = String((配置 && 配置.转写命令) || '')
   if (!配置 || !配置.语音转写 || !模板.includes('{file}')) return '[语音]'
@@ -351,10 +368,21 @@ async function 转写语音(段, 拉任意, 配置, 选项 = {}) {
   const 本地 = await 语音落文件(段, 拉任意, 家目录, 名)
   if (!本地) return '[语音（没下到音频）]'
   const 就绪 = await 转成wav(本地, 选项.ffmpeg || '', 家目录, 名)
+  try {
+    if (就绪 && existsSync(String(就绪))) {
+      语音文件表.set(String(选项.消息id || ''), String(就绪))
+      最后语音 = { 文件: String(就绪), 时: Date.now() }
+    }
+  } catch (error) {}
   const 结果 = await 跑命令(模板, 就绪, 配置.转写超时秒)
   if (结果.ok && 结果.文字) return '（语音）' + 结果.文字
   return '[语音（转写失败：' + String(结果.错 || '没输出').slice(0, 60) + '）]'
 }
+
+/** [本地补丁 2026-11-01] 最近一条 QQ 语音落在哪个文件 —— 学歌工具要用。
+ *  转写语音里填；转入一条 认领（按消息号）；认领不到就退回「最后一条」。 */
+const 语音文件表 = new Map()
+let 最后语音 = null
 
 /** 找 ffmpeg：环境变量 → PATH → 装依赖时随手装的那份 imageio-ffmpeg。
  *  语音要转成 wav 才能喂给识别命令，没有 ffmpeg 就只能把原始文件交出去。 */
@@ -501,6 +529,17 @@ function 归一化(原始) {
     转写命令: 字(混.转写命令).slice(0, 400),
     语音模型目录: 字(混.语音模型目录).slice(0, 400),
     转写超时秒: 数(混.转写超时秒, 默认配置.转写超时秒, 5, 600),
+    // [本地补丁 2026-10-31] 出站语音
+    允许发语音: 布(混.允许发语音, 默认配置.允许发语音),
+    语音音色: 字(混.语音音色).slice(0, 80) || 默认配置.语音音色,
+    语音合成命令: 字(混.语音合成命令).slice(0, 400),
+    语音合成超时秒: 数(混.语音合成超时秒, 默认配置.语音合成超时秒, 10, 600),
+    语音冷却秒: 数(混.语音冷却秒, 默认配置.语音冷却秒, 0, 3600),
+    允许唱歌: 布(混.允许唱歌, 默认配置.允许唱歌),
+    唱歌解释器: 字(混.唱歌解释器).slice(0, 400),
+    唱歌声库: 字(混.唱歌声库).slice(0, 400),
+    唱歌旋律: 字(混.唱歌旋律).slice(0, 40) || 默认配置.唱歌旋律,
+    唱歌步数: 数(混.唱歌步数, 默认配置.唱歌步数, 5, 100),
     补投窗口分: 数(混.补投窗口分, 默认配置.补投窗口分, 1, 240),
     长回复拆段: 布(混.长回复拆段, 默认配置.长回复拆段),
     拆段间隔毫秒: 数(混.拆段间隔毫秒, 默认配置.拆段间隔毫秒, 0, 5000),
@@ -877,6 +916,35 @@ export function 拆成消息段(text, 选项 = {}) {
 
 export function 群消息体(text) {
   return { group_id: 0, message: [{ type: 'text', data: { text } }] }
+}
+
+/**
+ * ⭐ 2026-10-31：从一句话里抓「点的是哪首歌」。
+ * 支持：唱《爱你》/ 唱一首爱你 / 来一首孤勇者 / 点一首…；不是点歌返回空。
+ * 为什么要抓：模型被点歌时如果不知道调子，会拿「自由/小星星」糊弄，用户听出来调子没变。
+ * 抓到歌名之后，工具会用它覆盖模型的选择；曲目表里没有就直说不会，不再乱套调子。
+ */
+export function 抓歌名(文) {
+  const 原 = String(文 || '').replace(/\s+/g, ' ').trim()
+  if (!原) return ''
+  // 书名号 / 引号里的名字最可靠
+  let m = /[《「“"]([^》」”"]{1,24})[》」”"]/.exec(原)
+  if (m) return m[1].trim()
+  m = /(?:唱|来|点|听)(?:一首|首|一个|个|一句|一段)?\s*([^\s，。！？、:：；;]{1,20})/.exec(原)
+  if (!m) return ''
+  let 名 = String(m[1] || '').trim().replace(/^(一首|首|个|句|段)/, '')
+  // 去掉尾部语气词：「唱首孤勇者呗」→ 孤勇者。
+  //   ⚠ 不剥「了」—— 「起风了」「后来」这种歌名末尾就带「了」，剥掉反而找不到歌。
+  名 = 名.replace(/[吧嘛呀啊呢哦噢呗啦]+$/g, '').trim()
+  if (!名) return ''
+  // 泛称 / 语气词 / 非点歌的「听我说」「唱砸了」之类，不算歌名
+  if (/^(歌|歌儿|歌曲|这个|那个|什么|啥|听听|一下|呗|吧|嘛|呀|啊|来|唱|我说|你说|听懂|听到|听完|听见|到|得|完|两句|几句|一声|一段|一遍|一个|一句|我听听|你听听|给你听|谁的歌|哪首)/.test(名)) return ''
+  // [本地补丁 2026-11-01] 实测踩到两次：「能唱就唱」被抓成歌名「就唱」、
+  //   「唱一首胜利的歌」被抓成「胜利的歌」—— 两个都不是歌名，工具照着找不到调子，
+  //   结果直接回「这首唱不出来」。下面两条把这类句子掐掉。
+  if (/^[就再又还也先别不没要想能会去请给帮让把用着待等骂砸怎下了]/.test(名)) return ''
+  if (/(的歌|首歌|的歌儿)$/.test(名)) return ''
+  return 名
 }
 
 /** ⭐ 2026-10-22：从一条 assistant 消息里挑出图片块（要发到 QQ 的那几张）。 */
@@ -1419,6 +1487,8 @@ export function apply(ctx) {
         const 触 = 触发消息.get(键) || null
         const 引用id = (醒着 && 触 && 触.引用id && 读配置().引用回复 !== false) ? String(触.引用id) : ''
         触发消息.delete(键)
+        触发文字.delete(键)
+        本轮声音.delete(键)
         // 门槛判了「不接」→ 这一轮一个字都不往外发（但会话里照常留着）
         // [本地补丁 2026-10-28] 静默标记是**一次性的**，必须每轮结束都清掉。
         //   以前它只在「这一轮确实有话说」时才被消费；如果某轮只调了 qq_reply_gate、
@@ -1737,7 +1807,7 @@ export function apply(ctx) {
         推('建独立环境', '完成')
       } else 推('建独立环境', '完成', '已经有了')
       推('装 sherpa-onnx', '进行中')
-      const r2 = await ASR跑(ASRpython, ['-m', 'pip', 'install', '--no-input', 'sherpa-onnx>=2', 'numpy', 'imageio-ffmpeg'], 'pip install')
+      const r2 = await ASR跑(ASRpython, ['-m', 'pip', 'install', '--no-input', 'sherpa-onnx>=2', 'numpy', 'imageio-ffmpeg', 'edge-tts'], 'pip install')
       if (r2.码 !== 0) {
         推('装 sherpa-onnx', '失败', '退出码 ' + r2.码)
         ASR装.失败 = '装依赖失败（可能是网速/镜像问题，看日志最后几行）'
@@ -1745,7 +1815,7 @@ export function apply(ctx) {
       }
       推('装 sherpa-onnx', '完成')
       推('自检', '进行中')
-      const r3 = await ASR跑(ASRpython, ['-c', 'import sherpa_onnx, numpy, imageio_ffmpeg; print("sherpa_onnx ok")'], '自检 import')
+      const r3 = await ASR跑(ASRpython, ['-c', 'import sherpa_onnx, numpy, imageio_ffmpeg, edge_tts; print("sherpa_onnx ok")'], '自检 import')
       if (r3.码 !== 0) {
         推('自检', '失败')
         ASR装.失败 = '装完了但 import 不进来，看日志'
@@ -2247,6 +2317,16 @@ export function apply(ctx) {
     }
 
     const 原话 = String(文字 || '').trim()
+    // [本地补丁 2026-11-01] 这一轮如果带了语音条，把落下来的音频记在这一间会话上 ——
+    //   「哼一遍教我唱这首歌」就是这么把音频交给学歌工具的。
+    try {
+      const 声 = 语音文件表.get(String(消息id || ''))
+        || (最后语音 && Date.now() - 最后语音.时 < 5 * 60 * 1000 ? 最后语音.文件 : '')
+      if (声) {
+        本轮声音.set(会话键(这间), { 文件: String(声), 时: Date.now() })
+        语音文件表.delete(String(消息id || ''))
+      }
+    } catch (error) {}
     // 称呼跟着这一行走（群里不止一个人，别拿私聊的名字去叫）
     const 谁 = String((这条 && 这条.称呼) || ((这条 && 这条.类型 === '群') ? '群里的人' : '对方'))
     // ⭐ 1.0.3（issue #13）：有图但一张都没取到（大表情取不到 url / 格式不认识）→ 必须留句话，
@@ -2324,7 +2404,32 @@ export function apply(ctx) {
       : ''
     // ⚠ 1.1.1（她定的）：人设**只走系统提示词**，不塞进消息里 —— 塞进来会留在对话历史里堆着，
     //   而且只对 QQ 这半边生效，自己打字时又是另一个样子。挂不上就不带（备人设 里会记一句）。
-    const 文案 = 基础 + 门槛提示 + 块提示 + 收藏提示
+    // [本地补丁 2026-10-31] 点歌提示：模型以前会「不是老爹就不唱」，
+    //   而且不知道调子时拿小星星/自由糊弄。这里把歌名直接塞进这一轮，谁点都唱。
+    const 点的歌 = 抓歌名(原话)
+    const 点歌提示 = 点的歌
+      ? String.fromCharCode(10) + String.fromCharCode(10)
+        + '（这条是在点歌：**' + 点的歌 + '**。群里**任何人**点歌都可以唱，不是只有老爹/主人；'
+        + '会唱就直接调 `qq_sing`（song 填歌名）。**不会的歌先调 `qq_find_score` 让机器人自己去网上找谱**'
+        + '（找谱走的是本机自己的路子，比你自己 web_fetch 靠谱 —— 别自己再去搜一遍）；'
+        + '找到数字简谱就照着唱，只找到谱子图的话图会在下一轮给你看，照着图转成 notation 再唱，'
+        + '唱的时候给 qq_sing 传 save=true，这支歌就记住了。'
+        + '**绝对不要反过来跟人要简谱** —— 真找不到就说「这首没学会」。'
+        + '对方要是愿意**哼一段**发语音条，也能用 qq_learn_song 把调子量下来，但那是备选，不是默认。'
+        + '**不要拿小星星/自由顶替**。）'
+      : ''
+    // [本地补丁 2026-11-01] 这一轮带了语音条时，告诉它「可以学歌」这条路 ——
+    //   不然有人哼一遍教它唱，它只会当普通语音条回一句话。
+    const 带声音 = (() => { try { return 本轮声音.has(会话键(这间)) } catch (error) { return false } })()
+    const 学歌提示 = 带声音
+      ? String.fromCharCode(10) + String.fromCharCode(10)
+        + '（这条里带了**语音条**。先看转写出来的字（可能是说话，也可能是哼唱、转出来是乱的）：'
+        + '对方要是让你**学他哼的调子**（「教你唱X」「照这个唱」「学一下」之类），'
+        + '就调 `qq_learn_song`（song 填歌名）把调子量下来存进曲目表，'
+        + '接着**马上**调 `qq_sing`（song 填同一个名字）唱一遍给他听；'
+        + '要是只是普通说话，照常接话就行。）'
+      : ''
+    const 文案 = 基础 + 门槛提示 + 块提示 + 收藏提示 + 点歌提示 + 学歌提示
 
     let content = [{ type: 'text', text: 文案 }]
     if (收下.length) {
@@ -2375,6 +2480,7 @@ export function apply(ctx) {
         类型: String((这条 && 这条.类型) || '私聊'),
         时: Date.now(),
       })
+      触发文字.set(会话键(这间), String(原话 || ''))
       try {
         if (ctx.sessions && typeof ctx.sessions.flush === 'function') await ctx.sessions.flush(agent.session)
       } catch (error) {}
@@ -2413,9 +2519,20 @@ export function apply(ctx) {
   //   而这两个都是在**这一轮当中**调的 —— 门槛先跑过一趟，消息号就没了。所以分开存，
   //   由 turn/end 统一收尾（见 收到事件）。
   const 触发消息 = new Map()   // 会话键 -> { id, 引用id, 发送者, 时 }
+  // [本地补丁 2026-10-31] 这一轮 QQ 消息的原文 —— 唱歌工具用它抓「点的是哪首歌」，
+  //   防止模型不知道调子就拿「自由/小星星」糊弄。turn/end 清掉。
+  const 触发文字 = new Map()
+  // [本地补丁 2026-11-01] 这一轮带的语音条落在哪个文件 —— 学歌工具（qq_learn_song）用它量音高。
+  //   跟 触发文字 一起在 turn/end 清掉。
+  const 本轮声音 = new Map()   // 会话键 -> { 文件, 时 }
   // [本地补丁 2026-10-30] 「这间会话最后发出去的是哪条」—— qq_recall 撤回的就是它。
   //   ⚠ QQ 只让撤回两分钟内的，过点了接口会拒。
   const 最后发出 = new Map()   // 会话键 -> { id, 时 }
+  // [本地补丁 2026-10-31] 出站语音的节流：
+  //   · 上次发语音 = 整个 QQ 号共用一个冷却（跨群也算），别让她一高兴每条都发语音；
+  //   · 语音发过 = 会话 -> 这一轮触发消息的时间戳，保证「一次回复最多一条语音」。
+  let 上次发语音 = 0
+  const 语音发过 = new Map()
   // [本地补丁 2026-10-30] 改签名的冷却 —— 签名是挂在好友列表里的长期状态，
   //   一分钟改三回看着像抽风，也容易被 QQ 盯上。六个小时一次够了。
   let 上次改签名 = 0
@@ -2664,6 +2781,7 @@ export function apply(ctx) {
         //   省得把上面那段 chain disposer 的写法再抄四遍。
         for (const [名, 造] of [['贴表情', 做贴表情工具], ['撤回', 做撤回工具],
           ['戳一戳', 做戳回去工具], ['点赞', 做点赞工具], ['改签名', 做签名工具],
+          ['发语音', 做语音工具], ['唱歌', 做唱歌工具], ['学歌', 做学歌工具], ['找谱', 做找谱工具],
           ['记共同记忆', 做记共同工具], ['忘共同记忆', 做忘共同工具]]) {
           try {
             const off = agent.ctx.tools.register(造(sid))
@@ -2798,6 +2916,609 @@ export function apply(ctx) {
     const 自带 = String((触 && 触.发送者) || '').replace(/[^0-9]/g, '')
     return 自带
   }
+
+  // [本地补丁 2026-10-31] 出站语音：文字 → mp3。
+  //   协议跟转写**反过来**：文字从 stdin 读，音频写到文件 —— 不走 shell，引号 / 空格 / 表情
+  //   都不会把命令弄坏。默认用装语音识别时那个 venv 里的 edge-tts（tools/qq_tts.py）。
+  function 合成语音文件(配置, 文本) {
+    return new Promise((resolve) => {
+      const 文字 = String(文本 || '').trim()
+      if (!文字) return resolve({ ok: false, 错: '没有文字' })
+      const 目录 = join(dirname(配置文件), 'audio')
+      try { mkdirSync(目录, { recursive: true }) } catch (error) {}
+      const 出 = join(目录, 'qq-voice-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.mp3')
+      const 模板 = String(配置.语音合成命令 || '').trim()
+      let 命令 = ''
+      let 参数 = []
+      if (模板) {
+        // 「命令 + 参数」按空白切（路径里别带空格）；{out} 换成输出文件
+        参数 = 模板.split(/\s+/).filter(Boolean).map((x) => x.replace(/\{out\}/g, 出))
+        命令 = 参数.shift() || ''
+      } else {
+        命令 = ASRpython
+        参数 = [join(PACKAGE_ROOT, 'tools', 'qq_tts.py'), '--out', 出,
+          '--voice', String(配置.语音音色 || 'zh-CN-XiaoyiNeural')]
+      }
+      if (!命令) return resolve({ ok: false, 错: '没配语音合成命令' })
+      let 子 = null
+      try {
+        子 = spawn(命令, 参数, {
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        })
+      } catch (error) {
+        return resolve({ ok: false, 错: '起不来：' + String((error && error.message) || error) })
+      }
+      let 错 = ''
+      let 收过 = false
+      const 收 = (v) => { if (收过) return; 收过 = true; resolve(v) }
+      const 超时秒 = Math.max(10, Number(配置.语音合成超时秒) || 60)
+      const 定时 = setTimeout(() => {
+        try { 子.kill() } catch (error) {}
+        收({ ok: false, 错: '超时（' + 超时秒 + ' 秒）' })
+      }, 超时秒 * 1000)
+      子.stderr.on('data', (c) => { 错 += c })
+      子.on('error', (e) => { clearTimeout(定时); 收({ ok: false, 错: String((e && e.message) || e) }) })
+      子.on('close', (码) => {
+        clearTimeout(定时)
+        let 大小 = 0
+        try { 大小 = statSync(出).size } catch (error) {}
+        if (码 === 0 && 大小 > 0) return 收({ ok: true, 文件: 出, 字节: 大小 })
+        收({ ok: false, 错: (错.trim() || ('退出码 ' + 码)) })
+      })
+      try {
+        子.stdin.write(文字)
+        子.stdin.end()
+      } catch (error) {}
+    })
+  }
+
+  /** 发一条 record 段。NapCat 各版本对 file 的认法不一样 ——
+   *  先试 file://，再试原始绝对路径，最后 base64 兜底（不依赖协议端能不能读本机文件）。 */
+  async function 发语音段(配置, 行, 文件) {
+    const 是群 = 行.类型 === '群'
+    const 动作 = 是群 ? 'send_group_msg' : 'send_private_msg'
+    const 体 = (file) => (是群
+      ? { group_id: Number(行.号码), message: [{ type: 'record', data: { file } }] }
+      : { user_id: Number(行.号码), message: [{ type: 'record', data: { file } }] })
+    let 最后 = await 发一个(配置.NapCat, 动作, 体('file://' + 文件), 配置)
+    if (最后 && 最后.ok) return 最后
+    最后 = await 发一个(配置.NapCat, 动作, 体(文件), 配置)
+    if (最后 && 最后.ok) return 最后
+    try {
+      const b64 = readFileSync(文件).toString('base64')
+      最后 = await 发一个(配置.NapCat, 动作, 体('base64://' + b64), 配置)
+    } catch (error) {}
+    return 最后
+  }
+
+  // [本地补丁 2026-10-31] 唱歌：歌词 + 内置旋律 → wav（DiffSinger，独立环境）。
+  //   edge-tts 只能朗读；真唱走 <DSH_HOME>/qq-sing 里的 diffsinger_utau。
+  //   跟发语音一样：文字从 stdin 读，不经过 shell。
+  function 合成唱歌文件(配置, 歌词, 旋律, 简谱, 速度, 存) {
+    return new Promise((resolve) => {
+      const 文 = String(歌词 || '').trim()
+      if (!文) return resolve({ ok: false, 错: '没有歌词' })
+      const 家 = dirname(配置文件)
+      const 解释器 = String(配置.唱歌解释器 || '').trim()
+        || (process.platform === 'win32'
+          ? join(家, 'qq-sing', '.venv', 'Scripts', 'python.exe')
+          : join(家, 'qq-sing', '.venv', 'bin', 'python'))
+      const 声库 = String(配置.唱歌声库 || '').trim()
+        || join(家, 'qq-sing', 'voicebanks', 'hutao')
+      if (!existsSync(解释器)) return resolve({ ok: false, 错: '唱歌环境没装好：' + 解释器 })
+      if (!existsSync(声库)) return resolve({ ok: false, 错: '唱歌声库没装好：' + 声库 })
+      const 目录 = join(家, 'audio')
+      try { mkdirSync(目录, { recursive: true }) } catch (error) {}
+      const 出 = join(目录, 'qq-sing-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.wav')
+      const 参数 = [
+        join(PACKAGE_ROOT, 'tools', 'qq_sing.py'), '--voice-bank', 声库, '--out', 出,
+        '--song', String(旋律 || 配置.唱歌旋律 || '小星星'),
+        '--acoustic-steps', String(Math.max(5, Math.min(Number(配置.唱歌步数) || 50, 100))),
+      ]
+      // 模型自己知道简谱时优先用它 —— 这是「点哪首歌就唱哪首」的关键
+      const 谱 = String(简谱 || '').trim()
+      if (谱) {
+        参数.push('--notation', 谱.slice(0, 800))
+        // 照谱认出来一次就记进曲目表 —— 下次点同一首歌直接唱，不用再找谱
+        if (存 === true) 参数.push('--save-song')
+      }
+      const 速 = Number(速度)
+      if (速 > 0) 参数.push('--bpm', String(Math.max(40, Math.min(速, 240))))
+      let 子 = null
+      try {
+        子 = spawn(解释器, 参数, {
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        })
+      } catch (error) {
+        return resolve({ ok: false, 错: '起不来：' + String((error && error.message) || error) })
+      }
+      let 错 = ''
+      let 收过 = false
+      const 收 = (v) => { if (收过) return; 收过 = true; resolve(v) }
+      const 定时 = setTimeout(() => {
+        try { 子.kill() } catch (error) {}
+        收({ ok: false, 错: '超时（180 秒）' })
+      }, 180000)
+      子.stderr.on('data', (c) => { 错 += c })
+      子.on('error', (e) => { clearTimeout(定时); 收({ ok: false, 错: String((e && e.message) || e) }) })
+      子.on('close', (码) => {
+        clearTimeout(定时)
+        let 大小 = 0
+        try { 大小 = statSync(出).size } catch (error) {}
+        // 脚本会在 stderr 里打「旋律：X（BPM N）」—— 拿它记日志，才知道实际唱的是哪个调
+        const 实 = /旋律：([^（\n]+)（BPM ([0-9.]+)）/.exec(错)
+        if (码 === 0 && 大小 > 0) {
+          return 收({ ok: true, 文件: 出, 字节: 大小,
+            旋律: 实 ? 实[1].trim() : '', bpm: 实 ? Number(实[2]) : 0 })
+        }
+        收({ ok: false, 错: (错.trim() || ('退出码 ' + 码)) })
+      })
+      try {
+        子.stdin.write(文)
+        子.stdin.end()
+      } catch (error) {}
+    })
+  }
+
+  /** 从这一轮 QQ 原文里抓「点的是哪首歌」。
+   *  支持：唱《爱你》/ 唱一首爱你 / 来一首孤勇者 / 点一首…；没点名返回空。
+   *  模型不知道调子时可能拿「自由」糊弄，这里抓到的歌名会覆盖它的选择。 */
+  const 这轮点的歌 = (sid) => 抓歌名(触发文字.get(sid) || '')
+
+  // 曲目表：内置 + 用户在 ~/.dsh/qq-sing/melodies.json 里加的。
+  //   工具说明里把它列出来，模型才知道能点哪些歌；加了新歌要重启 dsh-web 才会重新挂工具。
+  const 内置唱歌曲目 = ['小星星', '小星星副歌', '两只老虎', '生日快乐', '铃儿响叮当', '找朋友', '自由']
+  const 唱歌曲目名 = () => {
+    const 名 = 内置唱歌曲目.slice()
+    try {
+      const j = JSON.parse(readFileSync(join(dirname(配置文件), 'qq-sing', 'melodies.json'), 'utf8'))
+      for (const k of Object.keys(j || {})) if (!名.includes(k)) 名.push(k)
+    } catch (error) {}
+    return 名
+  }
+
+  // [本地补丁 2026-10-31] 「唱歌」工具。跟 qq_voice 共用冷却和「一次回复最多一条」；
+  //   旋律优先用模型自己给的简谱（点哪首唱哪首），其次曲目表，最后「自由」。
+  const 做唱歌工具 = (sid) => ({
+    name: 'qq_sing',
+    description:
+      '用**歌声**唱一句（真的唱歌，不是朗读）。只在对方明确让你唱歌、或者你想用歌逗人的时候用。' +
+      '群里**任何人点歌都可以唱** —— 不是只有老爹/主人；只要对方是在让你唱，就别拒绝。' +
+      '一次回复最多唱一条，歌词写中文、一两句（最多 30 字）。' +
+      '想唱某首歌时：song 填歌名（当前曲目：' + 唱歌曲目名().join(' / ') + '）；' +
+      '如果歌名不在里面、但你知道这首歌的简谱，就用 notation 传；' +
+      '**不知道调子就调 `qq_find_score`（找谱）** —— 它自己去网上搜，比你自己 web_fetch 靠谱；' +
+      '⚠ 用户**点了具体的歌**时，必须用那首歌的 song 或 notation，**不许拿小星星/自由顶替**；' +
+      '**绝对不要跟人开口要简谱** —— 那是你自己的活。找不到调子就自己再想办法（换歌名带歌手、再调一次找谱），' +
+      '实在不行才说「这首我没学会」，别把活推回给人。' +
+      '照谱认出调子来唱的时候，把 save 设成 true：这支歌就记进曲目表了，下次点同一首直接唱。' +
+      '只有用户没点歌、让你随便唱时，才用 song="自由"。' +
+      '简谱写法：1-7，高音在数字后加 ’（如 1’），低音加 ,（如 5,），长音加 -（如 5-），| 当分隔。' +
+      '例如小星星：1 1 5 5 6 6 5 4 4 3 3 2 2 1。' +
+      '平时聊天用文字；唱歌要跑本地唱歌模型，比发语音慢。' +
+      '只在「这一轮是被 QQ 消息叫起来的」时候有用。',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '要唱的歌词，中文，一两句，最多 30 字' },
+        song: { type: 'string', description: '曲目名（见工具说明的当前曲目）；不在表里就改用 notation 或 自由' },
+        notation: { type: 'string', description: '简谱，1-7；高音加 ’，低音加 ,，长音加 -。给了就优先用它' },
+        bpm: { type: 'number', description: '可选，速度 40-240；不填用曲目自带' },
+        save: {
+          type: 'boolean',
+          description: '把你的 notation 记进曲目表（下次点这首歌直接唱）。照谱认出来的调子就设 true',
+        },
+        reason: { type: 'string', description: '一句话理由（只写进日志）' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.允许唱歌 !== true) return { ok: true, 说: '唱歌这道闸关着（设置里的「允许唱歌」），这次没唱。' }
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着，唱不出去。' }
+      if (配置.试运行 === true) return { ok: true, 说: '试运行开着，没有真唱。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      if (静默轮.has(sid)) return { ok: true, 说: '这一轮已经决定不回了，不唱。' }
+      const 歌词 = String((args && args.text) || '').replace(/\s+/g, '').trim().slice(0, 30)
+      if (!歌词) return { ok: true, 说: '没给歌词，没唱。' }
+      const 这轮 = String(锚.触.时 || '')
+      if (语音发过.get(sid) === 这轮) return { ok: true, 说: '这一轮已经发过语音了，一条就够。' }
+      const 冷却 = Math.max(0, Number(配置.语音冷却秒) || 0) * 1000
+      const 剩 = 冷却 - (Date.now() - 上次发语音)
+      if (上次发语音 && 剩 > 0) {
+        return { ok: true, 说: '刚发过语音，还得等 ' + Math.ceil(剩 / 1000) + ' 秒，这次先用文字吧。' }
+      }
+      const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === sid && b.类型 === (锚.触.类型 === '群' ? '群' : '私聊'))
+        || (配置.绑定 || []).find((b) => 会话键(b.会话) === sid) || null
+      if (!行) return { ok: true, 说: '这间会话没绑聊天，唱不出去。' }
+      // 用户原文里点了歌名就以它为准 —— 模型选「自由」也盖掉
+      const 点名 = 这轮点的歌(sid)
+      const 歌 = 点名 || String((args && (args.song || args.melody)) || 配置.唱歌旋律 || '小星星').trim()
+      const 谱 = String((args && args.notation) || '').trim()
+      const 速 = Number(args && args.bpm) || 0
+      const 合成 = await 合成唱歌文件(配置, 歌词, 歌, 谱, 速, Boolean(args && args.save))
+      if (!合成.ok) {
+        const 错 = String(合成.错 || '')
+        记账('唱歌失败：' + 错.slice(0, 200))
+        if (错.includes('不认识的旋律')) {
+          return { ok: true, 说: '曲目表里没有《' + 歌 + '》的调子。**别回头找对方要简谱** —— '
+            + '先调 `qq_find_score`（song 记得带歌手），它去网上把谱找回来放进下一轮，'
+            + '你看清了就转成 notation 再唱；真是找不到才直说「这首没学会」。' }
+        }
+        return { ok: true, 说: '这次没唱成（唱歌环境或声库有问题），先用文字说吧。' }
+      }
+      try {
+        const r = await 发语音段(配置, 行, 合成.文件)
+        if (r && r.ok) {
+          上次发语音 = Date.now()
+          语音发过.set(sid, 这轮)
+          const 新id = r.数据 && r.数据.data
+            ? (r.数据.data.message_id != null ? r.数据.data.message_id : r.数据.data.messageId)
+            : null
+          if (新id != null) 最后发出.set(sid, { id: String(新id), 时: Date.now() })
+          const 理由 = String((args && args.reason) || '').trim()
+          const 实际旋律 = 合成.旋律 || (谱 ? '简谱' : 歌)
+          const 实际bpm = 合成.bpm || 速
+          记账('唱了一句（' + 歌词 + '，' + 实际旋律
+            + (实际bpm ? ' @' + 实际bpm + 'BPM' : '') + '，' + Math.round(合成.字节 / 1024) + 'KB）'
+            + (理由 ? '，理由：' + 理由 : ''))
+          try { unlinkSync(合成.文件) } catch (error) {}
+          return { ok: true, 说: '唱出来了。' }
+        }
+        记账('唱歌没发成功：' + JSON.stringify(r && r.数据).slice(0, 160))
+        return { ok: true, 说: '唱是唱出来了，但 QQ 那边没收，先用文字说吧。' }
+      } catch (error) {
+        记账('唱歌发出错：' + String((error && error.message) || error))
+        return { ok: true, 说: '这次没唱成。' }
+      }
+    },
+  })
+
+  // [本地补丁 2026-11-01] 「学歌」：把这一轮 QQ 语音条里的哼唱量成简谱，写进曲目表。
+  //   为什么非要这条路：DiffSinger 只认音符，而「这首歌的调子」记在模型脑子里经常是错的
+  //   ——《爱你》就是照着一张看不清八度的简谱猜，越改越不对。让人哼一遍，
+  //   音高直接从人声里量出来：谁都会哼，不用会看谱。
+  function 量哼唱(配置, 音频, 歌名, 歌词, 速度) {
+    return new Promise((resolve) => {
+      const 家 = dirname(配置文件)
+      const 解释器 = String(配置.唱歌解释器 || '').trim()
+        || (process.platform === 'win32'
+          ? join(家, 'qq-sing', '.venv', 'Scripts', 'python.exe')
+          : join(家, 'qq-sing', '.venv', 'bin', 'python'))
+      if (!existsSync(解释器)) return resolve({ ok: false, 错: '唱歌环境没装好：' + 解释器 })
+      if (!existsSync(String(音频))) return resolve({ ok: false, 错: '这一轮里没找到能听的语音文件' })
+      const 参数 = [
+        join(PACKAGE_ROOT, 'tools', 'qq_hum.py'), '--in', String(音频),
+        '--song', String(歌名), '--save',
+        '--melodies', join(家, 'qq-sing', 'melodies.json'),
+      ]
+      if (歌词) 参数.push('--lyrics', String(歌词).slice(0, 80))
+      const 速 = Number(速度)
+      if (速 > 0) 参数.push('--bpm', String(Math.max(40, Math.min(速, 240))))
+      let 子 = null
+      try {
+        子 = spawn(解释器, 参数, {
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        })
+      } catch (error) {
+        return resolve({ ok: false, 错: '起不来：' + String((error && error.message) || error) })
+      }
+      let 出 = ''
+      let 错 = ''
+      let 收过 = false
+      const 收 = (v) => { if (收过) return; 收过 = true; resolve(v) }
+      const 定时 = setTimeout(() => {
+        try { 子.kill() } catch (error) {}
+        收({ ok: false, 错: '超时（120 秒）' })
+      }, 120000)
+      子.stdout.on('data', (c) => { 出 += c })
+      子.stderr.on('data', (c) => { 错 += c })
+      子.on('error', (e) => { clearTimeout(定时); 收({ ok: false, 错: String((e && e.message) || e) }) })
+      子.on('close', (码) => {
+        clearTimeout(定时)
+        if (码 !== 0) return 收({ ok: false, 错: (String(错).trim() || ('退出码 ' + 码)) })
+        // 脚本把量出来的东西当 JSON 打在 stdout 最后一行
+        const 行 = String(出).trim().split(String.fromCharCode(10)).filter(Boolean).pop() || ''
+        let j = null
+        try { j = JSON.parse(行) } catch (error) {}
+        if (!j || j.ok !== true) return 收({ ok: false, 错: String(错).trim() || '没量出调子' })
+        收({ ok: true, 量: j })
+      })
+    })
+  }
+
+  // [本地补丁 2026-11-01] 「学歌」工具：谁哼一段都能教它一首歌。
+  const 做学歌工具 = (sid) => ({
+    name: 'qq_learn_song',
+    description:
+      '把对方**哼/唱的一小段**（这一轮的 QQ 语音条）量成曲调，存进曲目表 —— 存完就能用 qq_sing 照他自己的调子唱这首歌。' +
+      '什么时候用：对方说「教你唱X」「照这个唱」「学一下这个调子」之类，而且这一轮带了语音条（私聊、群聊都行，谁都可以教）。' +
+      '量完**接着调 qq_sing**（song 填同一个歌名）唱一遍给他听，别只回一句「学到了」。' +
+      '要他哼得有旋律（一个字一个音最好）；纯说话是量不出调子的 —— 那种情况让他哼一遍再发。' +
+      '歌名不在曲目表里、你又不确定简谱时，这是比「搜简谱」可靠得多的办法。',
+    parameters: {
+      type: 'object',
+      properties: {
+        song: { type: 'string', description: '这首歌叫什么（存进曲目表就用这个名字，之后 qq_sing 用同名）' },
+        lyrics: { type: 'string', description: '可选：他哼的那句歌词；填了以后能按歌词自动认歌' },
+        bpm: { type: 'number', description: '可选：速度 40-240；不填按哼的速度估' },
+        reason: { type: 'string', description: '一句话理由（只写进日志）' },
+      },
+      required: ['song'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.允许唱歌 !== true) return { ok: true, 说: '唱歌这道闸关着（设置里的「允许唱歌」），这次没学。' }
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着。' }
+      if (配置.试运行 === true) return { ok: true, 说: '试运行开着，没有真学。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      const 歌名 = String((args && args.song) || '').replace(/\s+/g, '').trim().slice(0, 20)
+      if (!歌名) return { ok: true, 说: '没给歌名，没学。' }
+      const 声 = 本轮声音.get(sid)
+        || (最后语音 && Date.now() - 最后语音.时 < 5 * 60 * 1000 ? { 文件: 最后语音.文件 } : null)
+      if (!声 || !声.文件) {
+        return { ok: true, 说: '这一轮里没听到语音条 —— 让对方**哼一段发过来**（最好一边哼一边把歌词打出来），我再量。' }
+      }
+      const 量 = await 量哼唱(配置, 声.文件, 歌名,
+        String((args && args.lyrics) || ''), Number(args && args.bpm) || 0)
+      if (!量.ok) {
+        const 错 = String(量.错 || '')
+        记账('学歌失败：' + 错.slice(0, 160))
+        return { ok: true, 说: '这段没量出调子（' + 错.slice(0, 60) + '）—— 让他哼清楚一点、每个字一个音再发一遍。' }
+      }
+      const j = 量.量
+      记账('学了首歌：' + 歌名 + '（' + j['个数'] + ' 个音，' + j['音域'] + '，BPM ' + j.bpm
+        + (j['警告'] ? '，' + j['警告'] : '') + '）')
+      return {
+        ok: true,
+        说: '量好了，已经存成《' + 歌名 + '》：' + j['个数'] + ' 个音，音域 ' + j['音域'] + '，BPM ' + j.bpm
+          + (j['警告'] ? '。⚠ ' + j['警告'] : '')
+          + '。接着调 qq_sing：song 填「' + 歌名 + '」、text 填要唱的歌词（最好是他哼的那句），就是照他的调子唱。',
+      }
+    },
+  })
+
+  // [本地补丁 2026-11-01] 「找谱」：让机器人自己上网把这首歌的谱子找回来。
+  //   起因：用户点《无敌》，它回「给我个简谱」—— 用户说「应该会自己去网络上找调子才对」。
+  //   查下来：模型在 DSH 里只有 web_fetch，它拿着 DuckDuckGo 的 HTML 搜索地址去搜，
+  //   而**这台机器上 DDG 返回的是反爬挑战页**（HTTP 202、零结果），所以每次都搜空。
+  //   这里换成搜狗的（能直连、结果真实），把 /link 那层跳转解析成真地址，
+  //   挑谱子站打开，把谱子图抠下来 —— 再塞进会话里让它自己看。
+  function 找谱(配置, 歌名, 跳过) {
+    return new Promise((resolve) => {
+      const 家 = dirname(配置文件)
+      const 解释器 = String(配置.唱歌解释器 || '').trim()
+        || (process.platform === 'win32'
+          ? join(家, 'qq-sing', '.venv', 'Scripts', 'python.exe')
+          : join(家, 'qq-sing', '.venv', 'bin', 'python'))
+      const 脚本 = join(PACKAGE_ROOT, 'tools', 'qq_score.py')
+      if (!existsSync(解释器)) return resolve({ ok: false, 错: '找不到 Python：' + 解释器 })
+      if (!existsSync(脚本)) return resolve({ ok: false, 错: '找不到找谱脚本' })
+      const 参数 = [脚本, '--song', String(歌名),
+        '--out', join(家, 'qq-sing', 'scores')]
+      for (const 页 of (Array.isArray(跳过) ? 跳过 : [])) {
+        const 址 = String(页 || '').trim()
+        if (址) 参数.push('--skip', 址)
+      }
+      let 子 = null
+      try {
+        子 = spawn(解释器, 参数, {
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        })
+      } catch (error) {
+        return resolve({ ok: false, 错: '起不来：' + String((error && error.message) || error) })
+      }
+      let 出 = ''
+      let 错 = ''
+      let 收过 = false
+      const 收 = (v) => { if (收过) return; 收过 = true; resolve(v) }
+      const 定时 = setTimeout(() => {
+        try { 子.kill() } catch (error) {}
+        收({ ok: false, 错: '找谱超时（90 秒）' })
+      }, 90000)
+      子.stdout.on('data', (c) => { 出 += c })
+      子.stderr.on('data', (c) => { 错 += c })
+      子.on('error', (e) => { clearTimeout(定时); 收({ ok: false, 错: String((e && e.message) || e) }) })
+      子.on('close', () => {
+        clearTimeout(定时)
+        const 行 = String(出).trim().split(String.fromCharCode(10)).filter(Boolean).pop() || ''
+        let j = null
+        try { j = JSON.parse(行) } catch (error) {}
+        if (!j) return 收({ ok: false, 错: (String(错).trim() || '没输出').slice(0, 160) })
+        收(j)
+      })
+    })
+  }
+
+  // [本地补丁 2026-11-01] 「找谱」工具：点歌点到了不会的歌，先自己去网上把谱找回来。
+  const 做找谱工具 = (sid) => ({
+    name: 'qq_find_score',
+    description:
+      '**自己去网上把这支歌的谱子找回来**（搜狗/360/必应 → 歌谱站 → 谱子图）。' +
+      '有人点了你**不会**的歌时先调它 —— **绝对不要反过来跟人要简谱**。' +
+      '钢琴五线谱、人像照片、logo 这些它自己会挡掉，只给你**带歌词的简谱图**。' +
+      '两种结果：① 直接给到数字简谱 → 把那段原样当 notation 传给 qq_sing 唱；' +
+      '② 只找到谱子图 → 图会被塞进**下一轮**消息里，下一轮你看得清就把数字写成 notation 再唱，' +
+      '唱的时候给 qq_sing 传 save=true，这首就记下来了。' +
+      '万一给的谱子不像那首歌（同名歌很多），或者实在看不清，把这次返回的**页面地址**填进 skip 再调一次，' +
+      '它会换下一个来源；别硬编旋律。' +
+      '歌名尽量带上歌手（比如 song="无敌 邓超"），同名歌才不会找错。',
+    parameters: {
+      type: 'object',
+      properties: {
+        song: { type: 'string', description: '歌名，最好带上歌手，例如「无敌 邓超」' },
+        skip: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '要跳过、别再给这几个页面（上次返回的「页面」地址），用来换一张谱',
+        },
+        reason: { type: 'string', description: '一句话理由（只写进日志）' },
+      },
+      required: ['song'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着，没去查。' }
+      if (配置.试运行 === true) return { ok: true, 说: '试运行开着，没去查。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      const 名 = String((args && args.song) || '').replace(/\s+/g, ' ').trim().slice(0, 30)
+      if (!名) return { ok: true, 说: '没给歌名，没查。' }
+      const 找 = await 找谱(配置, 名, args && args.skip)
+      const 引擎 = Array.isArray(找.引擎) ? 找.引擎.join('，') : ''
+      if (!找.ok) {
+        const 错 = String(找.错 || '').slice(0, 120)
+        记账('找谱没找到：' + 名 + '（' + 错 + '｜' + 引擎 + '）')
+        // 被搜索引擎拦了 ≠ 没有这首歌，这个区别要说清楚，不然它会跟人说「网上没有」
+        if (找.被拦 === true) {
+          return { ok: true, 说: '搜索站这会儿把我拦了（验证码），不是没有这首歌 —— 过几分钟再调一次。'
+            + '这一轮先用文字应着。' }
+        }
+        const 五线 = Array.isArray(找.见过五线谱) && 找.见过五线谱.length
+          ? '（找到的都是钢琴五线谱，唱不了：' + 找.见过五线谱.slice(0, 2).join(' / ') + '）'
+          : ''
+        const 候选 = Array.isArray(找.候选) && 找.候选.length
+          ? '（搜到过：' + 找.候选.slice(0, 3).map((x) => x.标题).join(' / ') + '）'
+          : ''
+        return { ok: true, 说: '我自己上网找了《' + 名 + '》，没拿到能唱的简谱' + 五线 + 候选 + '。'
+          + '换个说法再试一次也行：把歌手全名带上，或者用正式译名（song="无敌 邓超"）。'
+          + '**别找人要简谱**，实在不行就说「这首没学会」。' }
+      }
+      const 来源 = String(找.页面 || '')
+      const 标题 = String(找.标题 || 名)
+      if (找.文字谱) {
+        记账('找谱：' + 名 + '（取到数字简谱，来自 ' + 来源 + '）')
+        return { ok: true, 说: '找到了《' + 名 + '》的数字简谱（' + 标题 + '，来自 ' + 来源 + '）：'
+          + String(找.文字谱).slice(0, 400)
+          + ' —— 把它原样当 notation 传给 qq_sing 就能照这个调子唱。' }
+      }
+      const 图 = Array.isArray(找.图片) ? 找.图片.filter((x) => x && existsSync(String(x))).slice(0, 2) : []
+      if (!图.length) {
+        记账('找谱：' + 名 + '（搜到了页面但没抠到谱子图）')
+        return { ok: true, 说: '搜到页面了（' + 来源 + '）但没抠出谱子图，这次没成 —— 让对方哼一遍吧。' }
+      }
+      // 把谱子图塞进**下一轮**消息里：桥把图当普通收到的图交给模型，它就能看图了
+      let 塞进去了 = false
+      try {
+        const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === sid
+          && b.类型 === (锚.触.类型 === '群' ? '群' : '私聊'))
+          || (配置.绑定 || []).find((b) => 会话键(b.会话) === sid) || null
+        const 触 = 触发消息.get(sid) || {}
+        if (行) {
+          const r = await 转入一条(
+            '（**我自己记的备忘，不是别人说的话**：我刚上网把《' + 名 + '》的谱子找回来了，'
+            + '出处 ' + String(找.页面 || '') + '，页面标题「' + 标题 + '」。谱子图在下面 —— '
+            + '**先确认这是不是那首歌**（同名歌很多，看歌手/词曲作者对不对）。'
+            + '是的话：**只转写你要唱的那一两句**（歌词 30 字以内，一般就是谱子最开始那一两行），'
+            + '照着数字写 notation（1-7；高音在数字后加 ’，低音加 ,，长音加 -；小节线、连音线不用管），'
+            + '然后调 qq_sing 唱，**记得传 save=true** 把这支歌记下来。'
+            + '谱子上有速度（♩=100 这种）就一起传给 bpm。'
+            + '看清不准、或者根本不像，就把这次页面填进 skip 再调一次 qq_find_score 换一张，'
+            + '都换不到就直说「这首没学会」，**不要编旋律，也不要找对方要简谱**。'
+            + '要是想让人自己看谱，把图写进回复里就能发出去：![' + 名 + '](' + 图[0] + ')。)',
+            [{ type: 'image', data: { file: String(图[0]) } }],
+            String(触.id || ''), 行, { 昵称: '（找谱·我自己查的）', 号码: '' }, false,
+            undefined, undefined, '本机注入·我自己上网找的谱子（不是别人说的话）')
+          塞进去了 = Boolean(r && r.ok)
+        }
+      } catch (error) {
+        记账('找谱：图没塞进会话（' + String((error && error.message) || error) + '）')
+      }
+      记账('找谱：' + 名 + '（' + 图.length + ' 张图，来自 ' + 来源 + '，'
+        + (塞进去了 ? '已放进下一轮' : '没能放进会话')
+        + (找.说明 ? '；' + String(找.说明).slice(0, 80) : '') + '｜' + 引擎 + '）')
+      return { ok: true, 说: '网上找到了《' + 名 + '》的谱子（' + 标题 + '，' + 来源 + '）。'
+        + (塞进去了
+          ? '谱子图我已经放进**下一轮**消息里了 —— 下一轮你就能看到那张谱，照它写 notation 唱；'
+          : '图存在本机（' + 图.join(' ') + '），可以写进回复里发给对方：`![' + 名 + '](' + 图[0] + ')`；')
+        + '如果读不出/不像这首歌，就直说不会，别编。' }
+    },
+  })
+
+  // [本地补丁 2026-10-31] 「发语音」工具。为什么做成工具、不自动把每条回复都念出来：
+  //   群里连发语音条很吵，QQ 对语音也有风控。什么时候该用声音由它自己判断（通常是有人让它唱/念），
+  //   这里只管节流和发送：一次回复最多一条、整个号 30 秒冷却。
+  const 做语音工具 = (sid) => ({
+    name: 'qq_voice',
+    description:
+      '用**语音条**说一句话（QQ 里会真的出现一条能听的语音）。' +
+      '只在确实需要声音的时候用：对方让你唱歌、念出来、想听你的声音，或者一句话非要用语气才到位。' +
+      '平时聊天用文字 —— 群里连发语音条很吵，QQ 对语音也有风控。' +
+      '一次回复最多发一条，念的内容写短（一两句话，最多 300 字）。' +
+      '只在「这一轮是被 QQ 消息叫起来的」时候有用。',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '要念出来的话，一两句，最多 300 字' },
+        reason: { type: 'string', description: '一句话理由（只写进日志，群里/私聊都看不到）' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.允许发语音 !== true) return { ok: true, 说: '发语音这道闸关着（设置里的「允许发语音」），这次没发。' }
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着，语音发不出去。' }
+      if (配置.试运行 === true) return { ok: true, 说: '试运行开着，没有真发语音。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      if (静默轮.has(sid)) return { ok: true, 说: '这一轮已经决定不回了，不发语音。' }
+      const 文字 = String((args && args.text) || '').trim()
+      if (!文字) return { ok: true, 说: '没给要念的话，没发。' }
+      const 这轮 = String(锚.触.时 || '')
+      if (语音发过.get(sid) === 这轮) return { ok: true, 说: '这一轮已经发过一条语音了，一条就够。' }
+      const 冷却 = Math.max(0, Number(配置.语音冷却秒) || 0) * 1000
+      const 剩 = 冷却 - (Date.now() - 上次发语音)
+      if (上次发语音 && 剩 > 0) {
+        return { ok: true, 说: '刚发过语音，还得等 ' + Math.ceil(剩 / 1000) + ' 秒，这次先用文字吧。' }
+      }
+      const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === sid && b.类型 === (锚.触.类型 === '群' ? '群' : '私聊'))
+        || (配置.绑定 || []).find((b) => 会话键(b.会话) === sid) || null
+      if (!行) return { ok: true, 说: '这间会话没绑聊天，语音发不出去。' }
+      if (!String(配置.语音合成命令 || '').trim() && !ASR就绪()) {
+        return { ok: true, 说: '语音合成环境还没装好（设置页「语音转写」那张卡里点「自动装依赖」），这次先用文字说吧。' }
+      }
+      const 合成 = await 合成语音文件(配置, 文字)
+      if (!合成.ok) {
+        记账('语音合成失败：' + String(合成.错 || '没输出').slice(0, 160))
+        return { ok: true, 说: '这次没合成出来（语音合成环境或网络有问题），先用文字说吧。' }
+      }
+      try {
+        const r = await 发语音段(配置, 行, 合成.文件)
+        if (r && r.ok) {
+          上次发语音 = Date.now()
+          语音发过.set(sid, 这轮)
+          const 新id = r.数据 && r.数据.data
+            ? (r.数据.data.message_id != null ? r.数据.data.message_id : r.数据.data.messageId)
+            : null
+          if (新id != null) 最后发出.set(sid, { id: String(新id), 时: Date.now() })
+          const 理由 = String((args && args.reason) || '').trim()
+          记账('发了条语音（' + 文字.slice(0, 30) + (文字.length > 30 ? '…' : '')
+            + '，' + Math.round(合成.字节 / 1024) + 'KB）' + (理由 ? '，理由：' + 理由 : ''))
+          try { unlinkSync(合成.文件) } catch (error) {}
+          return { ok: true, 说: '语音发出来了。' }
+        }
+        记账('发语音没成功：' + JSON.stringify(r && r.数据).slice(0, 160))
+        return { ok: true, 说: '语音没发出去（QQ 那边没收），这次先用文字说吧。' }
+      } catch (error) {
+        记账('发语音出错：' + String((error && error.message) || error))
+        return { ok: true, 说: '语音没发出去。' }
+      }
+    },
+  })
 
   const 做撤回工具 = (sid) => ({
     name: 'qq_recall',

@@ -495,6 +495,53 @@ window.__ModuleLoader__.load({
           h('div', { style: S.dim },
             '插件自己不带语音模型（不然包会变成几百 MB）。仓库里给了一个现成接法：tools/asr_cli.py（本机 SenseVoice）；你有 whisper 或云端接口的话，写一条「读 {file}、打一行字」的命令接上就行。'),
         ),
+        h('div', { style: S.card },
+          h('div', { style: { ...S.h, margin: '0 0 8px' } }, '发语音（文字 → QQ 语音条）'),
+          行('允许发语音', 勾(配置.允许发语音, (v) => 改('允许发语音', v)), '开着时它可以在需要的时候调 qq_voice 发一条真的语音（唱歌、念出来、想让你听见）。不会每条回复都发 —— 只有它自己判断该用声音时才发，一次回复最多一条，整个号还有冷却。'),
+          行('音色', h('input', {
+            style: S.wide,
+            placeholder: 'zh-CN-XiaoyiNeural',
+            value: String(配置.语音音色 || ''),
+            onChange: (e) => 改('语音音色', e.target.value),
+          }), 'edge-tts 的音色名。常用的：zh-CN-XiaoyiNeural（年轻女声）、zh-CN-XiaoxiaoNeural（温柔女声）、zh-CN-YunxiNeural（男声）。'),
+          行('冷却（秒）', h('input', { type: 'number', min: 0, max: 3600, style: S.small, value: String(配置.语音冷却秒 ?? 30), onChange: (e) => 改('语音冷却秒', Number(e.target.value)) }), '两次语音之间至少隔多久（按整个 QQ 号算）。默认 30 秒 —— 群里连发语音条很吵，QQ 对语音也有风控。'),
+          行('合成命令（可选）', h('input', {
+            style: S.wide,
+            placeholder: '（留空 = 用内置 edge-tts）',
+            value: String(配置.语音合成命令 || ''),
+            onChange: (e) => 改('语音合成命令', e.target.value),
+          }), '想换别的 TTS 才填。约定跟转写反过来：文字从 stdin 读，音频写到 {out}；命令按空白切成参数，不经过 shell。'),
+          h('div', { style: S.dim }, '语音合成和识别共用上面那个「语音识别环境」（自动装依赖时会把 edge-tts 一起装上）。'),
+        ),
+        h('div', { style: S.card },
+          h('div', { style: { ...S.h, margin: '0 0 8px' } }, '唱歌（DiffSinger）'),
+          行('允许唱歌', 勾(配置.允许唱歌, (v) => 改('允许唱歌', v)), '开着时它可以在被要求时唱一句（真的按旋律唱，不是朗读）。要单独装 DiffSinger 环境和声库，装在 <DSH_HOME>/qq-sing/；跟发语音共用冷却和「一次回复最多一条」。'),
+          行('默认旋律', h('input', {
+            style: S.wide,
+            placeholder: '小星星',
+            value: String(配置.唱歌旋律 || ''),
+            onChange: (e) => 改('唱歌旋律', e.target.value),
+          }), '可选：小星星 / 小星星副歌 / 两只老虎 / 生日快乐 / 铃儿响叮当 / 找朋友 / 自由；也可以往 ~/.dsh/qq-sing/melodies.json 加歌。模型唱某首歌时会优先用自己给的简谱。'),
+          行('唱歌解释器', h('input', {
+            style: S.wide,
+            placeholder: '（留空 = <DSH_HOME>/qq-sing/.venv/bin/python）',
+            value: String(配置.唱歌解释器 || ''),
+            onChange: (e) => 改('唱歌解释器', e.target.value),
+          }), '装了 diffsinger-utau 的那个 Python。留空就用默认位置。'),
+          行('声库目录', h('input', {
+            style: S.wide,
+            placeholder: '（留空 = <DSH_HOME>/qq-sing/voicebanks/hutao）',
+            value: String(配置.唱歌声库 || ''),
+            onChange: (e) => 改('唱歌声库', e.target.value),
+          }), 'OpenUtau 格式的 DiffSinger 声库解压后的目录（里面有 dsconfig.yaml）。'),
+          行('声学步数', h('input', { type: 'number', min: 5, max: 100, style: S.small, value: String(配置.唱歌步数 ?? 50), onChange: (e) => 改('唱歌步数', Number(e.target.value)) }), '扩散采样步数，越大越慢、细节越多。默认 50（上游 CLI 默认），短歌约 9 秒；嫌慢可以降到 20。'),
+          h('div', { style: S.dim }, '唱歌走独立环境（<DSH_HOME>/qq-sing/.venv），不会拖慢收消息；第一次调用要加载模型，可能要十几秒。'),
+          h('div', { style: S.dim }, '没点过的歌怎么办：它**自己去网上找** —— 点歌时它调 qq_find_score，'
+            + '把「带歌词的简谱」找回来（钢琴五线谱、照片、logo 会被自动挡掉），照着谱转成 notation 唱，'
+            + '唱完存进 melodies.json，下次点同一首直接唱。工具是 qq_find_score + qq_sing(save=true)。'),
+          h('div', { style: S.dim }, '兜底：网上真找不到时，可以让群里的人**哼一遍**发语音条，说一句「教你唱某首歌」，'
+            + '它会用量音高把调子存进 melodies.json（谁都可以教，不用会看谱）。工具是 qq_learn_song。'),
+        ),
       )
 
       // ───────────── 门槛 ─────────────

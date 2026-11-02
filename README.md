@@ -1,10 +1,10 @@
 # dsh-qq-xiaofeiyu
 
 把 DeepSeek Harness（DSH）里的 AI 伙伴接到 QQ 上，让它像一个群里的人那样说话 —— 会潜水、
-会贴表情、会戳回去、会记人、会记事。
+会贴表情、会戳回去、会记人、会记事，**听得懂语音条、也能用语音回话**。
 
 这套是在 [`Yuuyuko-uu/dsh-qq-bridge`](https://github.com/Yuuyuko-uu/dsh-qq-bridge) 的基础上
-改出来的本地副本（上游 1.4.2 + 55 处本地补丁 + 3 个自写模块），用
+改出来的本地副本（上游 1.4.2 + 75 处本地补丁 + 3 个自写模块），用
 [NapCat](https://github.com/NapNeko/NapCatQQ) 当协议端，模型走本地网关。
 
 ```
@@ -29,6 +29,8 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `_stickers/` | 贴纸包（24 张自带 + manifest） |
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
+| `docs/voice.md` | **语音两个方向**：语音条转文字（SenseVoice）、文字转语音条（edge-tts + `qq_voice`）、唱歌（DiffSinger + `qq_sing`）、学歌（哼唱量音高 + `qq_learn_song`）、找谱（联网找谱 + `qq_find_score`）、依赖与坑 |
+| `docs/qq-sing-melodies.example.json` | 唱歌自定义曲目的示例：简谱字符串或音名列表，放到 `~/.dsh/qq-sing/melodies.json` |
 | `docs/upstream-issue-gate-leak.md` | 门槛吞掉下一轮那个 bug 的复现与补丁（已提 [PR #27](https://github.com/Yuuyuko-uu/dsh-qq-bridge/pull/27)） |
 | `docs/qq-plugins.html` | DSH 生态里 58 个 QQ 相关插件的分类清单 |
 | `docs/research-memory-style.html` | 群聊记忆 / 风格 / 表情包的调研 |
@@ -58,6 +60,11 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | **戳回去**（`qq_poke`） | 被戳了能戳回去（走 PacketApi，部分 QQ 版本不支持） |
 | **点赞**（`qq_like`） | 名片赞 |
 | **改签名**（`qq_sign` → `set_self_longnick`） | 单独一道闸 + 六小时冷却：签名挂在好友列表里，改错了不是发一条消息那么简单 |
+| **发语音**（`qq_voice`） | 文字 → QQ 语音条。edge-tts 合成 mp3，NapCat 自己转 silk。只在被 QQ 叫醒的轮次、一次回复最多一条、全号 30 秒冷却 —— 群里刷语音条很吵，QQ 也有风控 |
+| **唱歌**（`qq_sing`） | 歌词 + 旋律 → DiffSinger 真的唱出来（不是朗读），出 wav 再走语音条。点哪首唱哪首：曲目表 / 简谱 `notation`；和发语音共用冷却 |
+| **学歌**（`qq_learn_song`） | 有人**哼一段**发语音条，就把音高和时值量下来存进 `~/.dsh/qq-sing/melodies.json` —— 谁都能教一首新歌，不用会看谱。量音高在 `tools/qq_hum.py` |
+| **找谱**（`qq_find_score`） | 点了不会的歌，**它自己上网找谱**：搜狗搜「歌名 简谱」→ 拨开 /link 跳转 → 歌谱站抠谱子图（验尺寸剔 logo）→ 塞回会话让它照着写 `notation`。脚本 `tools/qq_score.py` |
+| **听语音** | QQ 语音条 → SenseVoice 转文字再转进去。上游只留了「命令接口」，本机用 Python 3.12 独立环境接上（见 `docs/voice.md`） |
 
 ### 记忆
 
