@@ -27,6 +27,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.4.2 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
+| `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `autostart on\|off`。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
 | `_stickers/` | 贴纸包（24 张自带 + manifest） |
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
 | `docs/voice.md` | **语音两个方向**：语音条转文字（SenseVoice）、文字转语音条（edge-tts + `qq_voice`）、唱歌（DiffSinger + `qq_sing`）、学歌（哼唱量音高 + `qq_learn_song`）、找谱（联网找谱 + `qq_find_score`）、依赖与坑 |
@@ -105,6 +106,25 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
    `BOT_QQ` 不配的话，她自己戳别人那一下会被当成「有人戳我」转回来 —— 启动日志里会喊。
 3. **绑定**：在桥的设置页把 DSH 会话和 QQ 群/私聊对上。桥的配置文件默认在
    `~/.dsh/qq-bridge-config.json`（自己写一份也行，字段见 `默认配置`）。
+
+### 启停
+
+三个 systemd 用户单元（NapCat / DSH web / 事件适配器）默认**不开机自启**，用仓库根目录的
+`start-all.sh` 手动拉起：
+
+```bash
+./start-all.sh                    # 全部拉起（= start）
+./start-all.sh stop
+./start-all.sh status             # 单元状态 + 端口通不通
+./start-all.sh autostart on|off   # 改回 / 关掉开机自启
+```
+
+它只驱动单元、不自己起进程：启动细节（等 wayland socket、代理环境、崩溃自恢复）和真实
+号码都留在单元文件里（见 `deploy/`），所以这个脚本可以公开。它另外做两件单元管不到的事 ——
+起 NapCat 前清掉残留的旧 QQ 实例（同一个 `--user-data-dir` 只允许一个），以及按端口判断
+「真的活了」（`systemctl` 说 active 不等于能干活）。
+
+⚠ **重启 DSH 后会话必须在网页里重新点开** —— 桥投递不进去，只会在日志里每 2 秒重试一次。
 
 ### 已知的限制
 
