@@ -90,6 +90,10 @@ const 默认配置 = {
   语音合成命令: '', // 想换别的 TTS 就填：命令 + 参数，用 {out} 占位；文字从 stdin 读。留空 = 用内置 edge-tts
   语音合成超时秒: 60, // 自定义 TTS（比如 F5-TTS 克隆）加载模型慢，别用 30 秒卡它
   语音冷却秒: 30, // 两次语音之间至少隔多久（按整个 QQ 号算，防刷）
+  // [本地补丁 2026-11-02] 偶尔主动发语音：0 = 关（默认）；>0 = 每一轮「QQ 叫醒的、
+  //   没图、文字不长」的回复按这个百分比额外念一条。共用 语音冷却秒 和一轮一条。
+  主动语音概率: 0,
+  主动语音最多字: 60,
   // [本地补丁 2026-10-31] 唱歌（DiffSinger）。跟「发语音」共用冷却和每轮一条的限制；
   //   默认关，等声库和推理环境装好、实测过再打开。
   允许唱歌: false,
@@ -581,6 +585,8 @@ function 归一化(原始) {
     语音合成命令: 字(混.语音合成命令).slice(0, 400),
     语音合成超时秒: 数(混.语音合成超时秒, 默认配置.语音合成超时秒, 10, 600),
     语音冷却秒: 数(混.语音冷却秒, 默认配置.语音冷却秒, 0, 3600),
+    主动语音概率: 数(混.主动语音概率, 默认配置.主动语音概率, 0, 100),
+    主动语音最多字: 数(混.主动语音最多字, 默认配置.主动语音最多字, 6, 300),
     允许唱歌: 布(混.允许唱歌, 默认配置.允许唱歌),
     唱歌解释器: 字(混.唱歌解释器).slice(0, 400),
     唱歌声库: 字(混.唱歌声库).slice(0, 400),
@@ -1640,6 +1646,41 @@ export function apply(ctx) {
     return 出
   }
 
+  // [本地补丁 2026-11-02] 偶尔主动发一条语音。用户要的是「偶尔必要的时候能听到声音」，
+  //   但不希望每条都发：按「主动语音概率」掷骰子，共用 qq_voice 的冷却和一轮一条。
+  //   只在真发出去了、且这一轮没有图的短回复上做；念的就是这一轮的文字。
+  async function 主动语音(配置, 净文, 图们, 方向, 是QQ唤醒, 已发出) {
+    if (!已发出) return
+    if (配置.允许发语音 !== true) return
+    const 概率 = Math.max(0, Math.min(100, Number(配置.主动语音概率) || 0))
+    if (!概率 || Math.random() * 100 >= 概率) return
+    if (!是QQ唤醒) return
+    if ((Array.isArray(图们) ? 图们.length : 0) > 0) return
+    const 字数上限 = Math.max(6, Number(配置.主动语音最多字) || 60)
+    const 文字 = String(净文 || '').replace(/\s+/g, ' ').trim()
+    if (!文字 || 文字.length > 字数上限) return
+    const 冷却 = Math.max(0, Number(配置.语音冷却秒) || 0) * 1000
+    if (上次发语音 && 冷却 - (Date.now() - 上次发语音) > 0) return
+    const 键 = 会话键(方向)
+    const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === 键 && b.类型 === '群')
+      || (配置.绑定 || []).find((b) => 会话键(b.会话) === 键) || null
+    if (!行) return
+    const 合成 = await 合成语音文件(配置, 文字)
+    if (!合成.ok) { 记账('主动语音没合成出来：' + String(合成.错 || '').slice(0, 120)); return }
+    try {
+      const r = await 发语音段(配置, 行, 合成.文件)
+      if (r && r.ok) {
+        上次发语音 = Date.now()
+        记账('主动发了条语音（' + 文字.slice(0, 30) + (文字.length > 30 ? '…' : '')
+          + '，' + Math.round(合成.字节 / 1024) + 'KB）')
+      } else {
+        记账('主动语音没发出去：' + JSON.stringify(r && r.数据).slice(0, 120))
+      }
+    } finally {
+      try { unlinkSync(合成.文件) } catch (error) {}
+    }
+  }
+
   /** 一轮真正落地：总开关 / 试运行 在这儿把关。 */
   async function 落地一发(配置, 文字, 图们, 方向 = '', 是QQ唤醒 = false, 引用id = '', 是本地手打 = false) {
     if (已发轮.size > 300) 已发轮.clear() // 防 Set 无限长
@@ -1696,6 +1737,11 @@ export function apply(ctx) {
     记账(`${全过 ? '✅ 已发到 QQ：' : '⚠ 发 QQ 有问题：'}「${净文.slice(0, 50)}${净文.length > 50 ? '…' : ''}」${图标}`)
     for (const r of 结果) {
       if (!r.ok) 记账(`   ${r.action} 失败：${JSON.stringify(r.数据).slice(0, 140)}`)
+    }
+    try {
+      await 主动语音(配置, 净文, 图们, 方向, 是QQ唤醒, 全过)
+    } catch (error) {
+      记账('主动语音出错：' + String((error && error.message) || error))
     }
   }
 
@@ -3460,10 +3506,16 @@ export function apply(ctx) {
       if (!行) return { ok: true, 说: '这间会话没绑聊天，唱不出去。' }
       // 用户原文里点了歌名就以它为准 —— 模型选「自由」也盖掉
       const 点名 = 这轮点的歌(sid)
-      const 歌 = 点名 || String((args && (args.song || args.melody)) || 配置.唱歌旋律 || '小星星').trim()
+      const 显式歌 = String((args && (args.song || args.melody)) || '').trim()
+      const 歌 = 点名 || 显式歌 || 配置.唱歌旋律 || '小星星'
       const 谱 = String((args && args.notation) || '').trim()
       const 速 = Number(args && args.bpm) || 0
-      const 合成 = await 合成唱歌文件(配置, 歌词, 歌, 谱, 速, Boolean(args && args.save))
+      // [本地补丁 2026-11-02] 只有「歌名是点出来的 / 模型明说的」才落库。
+      //   以前歌名会退回默认旋律（小星星），照谱认出《晴天》却存成《小星星》，
+      //   把内置曲目覆盖成半句 —— 2026-11-02 00:57 实测发生过。
+      const 可存 = Boolean((点名 || 显式歌) && 谱)
+      if (args && args.save && !可存) 记账('照谱这次没点歌名 / 没给简谱，不落库（免得覆盖内置曲目）')
+      const 合成 = await 合成唱歌文件(配置, 歌词, 歌, 谱, 速, Boolean(args && args.save) && 可存)
       if (!合成.ok) {
         const 错 = String(合成.错 || '')
         记账('唱歌失败：' + 错.slice(0, 200))
