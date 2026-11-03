@@ -45,7 +45,8 @@ const exports = 捕获.factory(假require)
 let 挂了 = 0
 const 报 = (标签, 过, 详情) => { if (!过) 挂了++; console.log(`${过 ? 'PASS' : 'FAIL'}  ${标签}${详情 ? '  :: ' + 详情 : ''}`) }
 
-报('模块 id = dsh-qq-link', 捕获.id === 'dsh-qq-link', 捕获.id)
+// [本地补丁 2026-11-02] 上游断言 id = dsh-qq-link；本地包名保留 dsh-qq-bridge，id 与之对齐
+报('模块 id = dsh-qq-bridge', 捕获.id === 'dsh-qq-bridge', 捕获.id)
 报('inject 只依赖 slots', Array.isArray(exports.inject) && exports.inject.join() === 'slots')
 
 let 注册 = null

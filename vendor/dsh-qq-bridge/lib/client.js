@@ -7,7 +7,10 @@
 // ⚠ 这里不碰会话、不发消息，只是往宿主那几条 /dsh-qq-bridge/* 路由上读写。
 
 window.__ModuleLoader__.load({
-  id: 'dsh-qq-link',
+  // [本地补丁 2026-11-02] 上游 1.5.0 把模块 id 改成了 dsh-qq-link；本机包名仍是
+  // dsh-qq-bridge，加载器按包名核对，id 对不上就会「loaded without registering」，
+  // 整个网页侧起不来（Failed to load plugins）。所以这里跟着包名走。
+  id: 'dsh-qq-bridge',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports

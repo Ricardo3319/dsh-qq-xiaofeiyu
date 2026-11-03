@@ -102,6 +102,21 @@ profile（`~/.dsh/profiles/web/package.json`）里那条依赖和 bundles 一直
 同理保持旧名（上游自己也是这么做的，改名会丢数据）。
 **下次合并若在这几行冲突，按旧名保留。**
 
+### 还有一个连带的坑：`lib/client.js` 的模块 id
+
+网页半边是 `window.__ModuleLoader__.load({ id: ... })`，这个 id 也必须等于包名。
+上游 1.5.0 顺手把它改成了 `dsh-qq-link`，合并时**没冲突、不会报错、宿主也照常收发** ——
+只有打开网页才炸，整页停在：
+
+```
+Failed to load plugins
+dsh-qq-bridge: ... loaded without registering "dsh-qq-bridge" via __ModuleLoader__.load
+```
+
+修法：`lib/client.js` 的 `id:` 改回 `dsh-qq-bridge`，`tests/网页半边.mjs` 里那条断言
+（`模块 id = dsh-qq-link`）同步改，两处都带 `[本地补丁 日期]`。
+**下次合并后除了跑测试，还要真在浏览器里打开一次网页** —— 这个坑宿主侧测试测不出来。
+
 ## 合并进来、但暂时关着的新能力
 
 - **正文里的文件链接会真的上传文件**（1.4.5+）：上游接受任意绝对路径，只检查「存在 / 是

@@ -116,6 +116,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 ./start-all.sh                    # 全部拉起（= start）
 ./start-all.sh stop
 ./start-all.sh status             # 单元状态 + 端口通不通
+./start-all.sh url                # 打出当前能打开的 DSH 网页地址（带 token）
 ./start-all.sh autostart on|off   # 改回 / 关掉开机自启
 ```
 
@@ -125,6 +126,10 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 「真的活了」（`systemctl` 说 active 不等于能干活）。
 
 ⚠ **重启 DSH 后会话必须在网页里重新点开** —— 桥投递不进去，只会在日志里每 2 秒重试一次。
+
+⚠ **`dsh web` 每次启动都重新随机生成 token**，浏览器里 30 天的 cookie 绑的是当次那个。
+所以重启之后直接开 `127.0.0.1:3080` 只会看到 `dsh web authentication required`，旧书签也一样 ——
+用 `./start-all.sh url` 取当前那条带 token 的地址。
 
 ### 已知的限制
 

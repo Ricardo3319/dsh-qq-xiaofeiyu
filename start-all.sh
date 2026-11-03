@@ -6,6 +6,7 @@
 #   ./start-all.sh start | up
 #   ./start-all.sh stop  | down
 #   ./start-all.sh status | st
+#   ./start-all.sh url                 打出当前能打开的 DSH 网页地址（带 token）
 #   ./start-all.sh autostart off       关掉开机自启，以后手动跑本脚本
 #   ./start-all.sh autostart on        恢复开机自启（下次登录生效）
 #
@@ -46,7 +47,7 @@ bad()  { printf '  %s✗%s %s\n' "$C_BAD" "$C_OFF" "$*"; }
 step() { printf '\n%s%s%s\n' "$C_BOLD" "$*" "$C_OFF"; }
 
 usage() {
-    sed -n '3,12p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'
+    sed -n '3,11p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'
 }
 
 # ---- 基础设施 ----------------------------------------------------------
@@ -92,6 +93,13 @@ clean_stale_qq() {
     fi
 }
 
+# dsh web 每次启动都重新随机生成 token，浏览器里那条 30 天 cookie 绑的是上一次的。
+# 所以重启之后旧的地址/书签一律 401，表现成「网页打不开」。当前这条只写在 journal 里。
+dsh_url() {
+    journalctl --user -u "$DSH_UNIT" --no-pager -n 400 2>/dev/null |
+        grep -o "http://127\.0\.0\.1:$DSH_PORT/?token=[^[:space:]]*" | tail -1
+}
+
 # ---- 子命令 ------------------------------------------------------------
 
 cmd_start() {
@@ -115,7 +123,17 @@ cmd_start() {
     step "结果"
     if [ "$rc" -eq 0 ]; then
         echo "  三个都在跑。还剩一步只能手动做："
-        echo "  打开 http://127.0.0.1:$DSH_PORT ，把私聊 + 各个群的会话点开。"
+        local url
+        url=$(dsh_url)
+        if [ -n "$url" ]; then
+            echo "  用这条打开（端口直连会 401，token 每次启动都变）："
+            echo
+            echo "    $url"
+            echo
+        else
+            echo "  打开 http://127.0.0.1:$DSH_PORT （journal 里还没打出 token，用 ./start-all.sh url 再取）"
+        fi
+        echo "  然后把私聊 + 各个群的会话点开。"
         echo "  DSH 一重启，会话就是关的 —— 桥投递不进去，只会在日志里每 2 秒重试一次，"
         echo "  而且超过 10 分钟的旧消息按设计不再补投。"
     else
@@ -170,6 +188,23 @@ EOF
     fi
 }
 
+cmd_url() {
+    local url
+    url=$(dsh_url)
+    if [ -n "$url" ]; then
+        echo "$url"
+        echo
+        echo "  （token 每次启动 dsh-web 都会换，换过之后旧的地址和书签就失效了）" >&2
+        return 0
+    fi
+    if ! systemctl --user is-active --quiet "$DSH_UNIT"; then
+        bad "dsh-web 没在跑 —— 先 ./start-all.sh"
+        return 1
+    fi
+    bad "journal 里还没出现带 token 的地址，等几秒再试；或在网页里重新打开一次"
+    return 1
+}
+
 cmd_autostart() {
     case "${1:-}" in
         off)
@@ -195,6 +230,7 @@ case "${1:-start}" in
     start | up | "")  require_session; cmd_start ;;
     stop | down)      require_session; cmd_stop ;;
     status | st)      require_session; cmd_status ;;
+    url)              require_session; cmd_url ;;
     autostart)        require_session; shift; cmd_autostart "${1:-}" ;;
     -h | --help | help) usage ;;
     *)
