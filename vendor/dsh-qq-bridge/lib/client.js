@@ -548,6 +548,19 @@ window.__ModuleLoader__.load({
             onChange: (e) => 改('语音音色', e.target.value),
           }), 'edge-tts 的音色名。常用的：zh-CN-XiaoyiNeural（年轻女声）、zh-CN-XiaoxiaoNeural（温柔女声）、zh-CN-YunxiNeural（男声）。'),
           行('冷却（秒）', h('input', { type: 'number', min: 0, max: 3600, style: S.small, value: String(配置.语音冷却秒 ?? 30), onChange: (e) => 改('语音冷却秒', Number(e.target.value)) }), '两次语音之间至少隔多久（按整个 QQ 号算）。默认 30 秒 —— 群里连发语音条很吵，QQ 对语音也有风控。'),
+          // [本地补丁 2026-11-03] 语速/音调用 edge-tts 的 --rate / --pitch 语法（'-4%' / '+2Hz'）
+          行('语速', h('input', {
+            style: S.small,
+            placeholder: '-4%',
+            value: String(配置.语音语速 || ''),
+            onChange: (e) => 改('语音语速', e.target.value),
+          }), 'edge-tts 的语速，写法像 -4% / +10%。默认 -4%（比原速慢一点）—— 原速念中文像播报。填 +0% 回到原样。'),
+          行('音调', h('input', {
+            style: S.small,
+            placeholder: '+2Hz',
+            value: String(配置.语音音调 || ''),
+            onChange: (e) => 改('语音音调', e.target.value),
+          }), 'edge-tts 的音调，写法像 +2Hz / -5Hz。默认 +2Hz，抬一点点更像人说话。填 +0Hz 回到原样。'),
           行('合成命令（可选）', h('input', {
             style: S.wide,
             placeholder: '（留空 = 用内置 edge-tts）',
@@ -555,6 +568,14 @@ window.__ModuleLoader__.load({
             onChange: (e) => 改('语音合成命令', e.target.value),
           }), '想换别的 TTS 才填。约定跟转写反过来：文字从 stdin 读，音频写到 {out}；命令按空白切成参数，不经过 shell。'),
           h('div', { style: S.dim }, '语音合成和识别共用上面那个「语音识别环境」（自动装依赖时会把 edge-tts 一起装上）。'),
+          // [本地补丁 2026-11-03] 「偶尔主动发」这组以前只有配置项、没有界面（用户找不到在哪儿关）。
+          h('div', { style: { ...S.h, margin: '14px 0 8px', fontSize: 13 } }, '偶尔主动发一条'),
+          h('div', { style: { ...S.dim, marginBottom: 8 } },
+            '上面那些是「它自己判断该用声音时」才发。这一组是额外的：按比例把**这一轮回复的正文**再念一条。',
+            '⚠ 念的就是正文（只会去掉表情和括号旁白、只取第一句）—— 想要「语音说另一句话」，把概率留 0，让它自己写。'),
+          行('主动念的概率', h('input', { type: 'number', min: 0, max: 100, style: S.small, value: String(配置.主动语音概率 ?? 0), onChange: (e) => 改('主动语音概率', Number(e.target.value)) }), '0 = 关（默认）。设成 8 就是大约每十几轮 QQ 对话额外念一条。只对「QQ 叫醒的、没有图、文字不超上限」的回复生效。'),
+          行('最长几个字', h('input', { type: 'number', min: 6, max: 300, style: S.small, value: String(配置.主动语音最多字 ?? 60), onChange: (e) => 改('主动语音最多字', Number(e.target.value)) }), '回复比这个长就不主动念。默认 60。'),
+          行('主动念的冷却（秒）', h('input', { type: 'number', min: 0, max: 86400, style: S.small, value: String(配置.主动语音冷却秒 ?? 600), onChange: (e) => 改('主动语音冷却秒', Number(e.target.value)) }), '只管「自己主动念」这一种，默认 600 秒（10 分钟）。被点名发的语音不受它影响，走上面那个 30 秒冷却。'),
         ),
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '唱歌（DiffSinger）'),
