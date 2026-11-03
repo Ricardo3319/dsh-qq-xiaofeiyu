@@ -27,6 +27,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.5.0 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释。⚠ 本地包名仍叫 `dsh-qq-bridge`（上游已改名 `dsh-qq-link`）—— 见文末许可一节 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
+| `deploy/preset-xiaofeiyu.yml.template` | **人设的仓库副本** —— 真正生效那份在 `~/.dsh/profiles/web/cordis.patch.yml` 里，profile 重建 / 换机器时照这份还原 |
 | `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `autostart on\|off`。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
 | `_stickers/` | 贴纸包（24 张自带 + manifest） |
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
