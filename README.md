@@ -26,6 +26,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 |---|---|
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.5.0 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释。⚠ 本地包名仍叫 `dsh-qq-bridge`（上游已改名 `dsh-qq-link`）—— 见文末许可一节 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
+| `tools/sticker_packs_index.py` | 把 dsh-meme 图库市场装下来的表情包编成索引（`~/.dsh/qq-sticker-packs.json`），桥每轮随机抽 8 张塞进表情菜单 —— 图库这样才进得了 QQ |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `deploy/preset-xiaofeiyu.yml.template` | **人设的仓库副本** —— 真正生效那份在 `~/.dsh/profiles/web/cordis.patch.yml` 里，profile 重建 / 换机器时照这份还原 |
 | `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `autostart on\|off`。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
@@ -58,6 +59,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 |---|---|
 | **引用回复**（`reply` 段） | 群里人多时不引用就对不上号。只在这批只有一条消息时引，长回复拆段只挂在第一条 |
 | **贴表情**（`qq_react` → `set_msg_emoji_like`） | 不想发言、但也不该像没看见 —— 贴个表情最省 |
+| **发表情包** | 自带 24 张（人设里写死名字）+ 她自己收的（`_stickers/收_*`）+ **图库**：dsh-meme 市场装的包放在 `~/.dsh/meme-packs`，仓库根下 `sticker-packs` 是指过去的软链，桥每轮随机抽 8 张塞进「表情包菜单」 |
 | **撤回**（`qq_recall` → `delete_msg`） | 撤自己刚发的那条，自己卡两分钟时限 |
 | **戳回去**（`qq_poke`） | 被戳了能戳回去（走 PacketApi，部分 QQ 版本不支持） |
 | **点赞**（`qq_like`） | 名片赞 |

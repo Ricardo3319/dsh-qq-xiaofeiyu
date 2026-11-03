@@ -1280,6 +1280,38 @@ export function apply(ctx) {
     文档目录: () => join(String(读配置().图片根目录 || '').trim() || join(目录, 'stickers'), '_stickers'),
     记账,
   })
+  // [本地补丁 2026-11-03] 图库包（dsh-meme 的图库市场装下来的那批）也给 QQ 用。
+  //   索引由 tools/sticker_packs_index.py 生成：330 张，模型不可能全记住，所以每轮**随机抽 8 张**
+  //   塞进表情菜单 —— 抽到哪几张，它这一轮就知道能发哪几张。
+  //   文件一个字节都不搬：仓库根下有个 `sticker-packs/` 软链指向 ~/.dsh/meme-packs，
+  //   于是这些图跟 `_stickers/` 一样按「图片根目录」就能找到。
+  let 图库缓存 = { at: -1, 条: [] }
+  function 图库抽样(几个) {
+    try {
+      const 文件 = join(目录, 'qq-sticker-packs.json')
+      const 信 = statSync(文件, { throwIfNoEntry: false })
+      if (!信) return ''
+      if (信.mtimeMs !== 图库缓存.at) {
+        const j = JSON.parse(readFileSync(文件, 'utf8'))
+        图库缓存 = { at: 信.mtimeMs, 条: Array.isArray(j && j.图) ? j.图 : [] }
+      }
+    } catch (错误) {
+      图库缓存 = { at: -1, 条: [] }
+      return ''
+    }
+    const 条 = 图库缓存.条
+    if (!条.length) return ''
+    const 挑 = []
+    const 用过 = new Set()
+    const 要 = Math.min(几个, 条.length)
+    while (挑.length < 要) {
+      const i = Math.floor(Math.random() * 条.length)
+      if (用过.has(i)) continue
+      用过.add(i)
+      挑.push(条[i])
+    }
+    return 挑.map((x) => x.相对 + (x.情绪 ? '（' + x.情绪 + '）' : '')).join(' · ')
+  }
   const 读水位 = () => {
     try {
       const j = JSON.parse(readFileSync(状态文件, 'utf8'))
@@ -2749,11 +2781,16 @@ export function apply(ctx) {
           + 'bixin比心 maozhua卖萌 zaoshanghao早安 qiurao求饶 yun晕 zhenjing惊到 '
           + 'haixiu害羞 toukan偷看 wuyu无语 shuijiao睡觉 xia吓到 tangping躺平'
         const s = 表情库.摘要()
+        const 图库 = 图库抽样(8)
         return String.fromCharCode(10) + String.fromCharCode(10)
           + '（表情包菜单。自带的 24 张：' + 自带 + ' —— 写成 `_stickers/名字.jpg`。）'
           + (s
             ? String.fromCharCode(10) + '（你后来收的：' + s
               + '。这几张要**原样抄**整条路径，`收_` 前缀和扩展名都不能少。）'
+            : '')
+          + (图库
+            ? String.fromCharCode(10) + '（图库里这一轮抽到的：' + 图库
+              + '。也是原样抄整条路径；下一轮抽到的会换，别硬记。）'
             : '')
           + String.fromCharCode(10)
           + '（挑情绪最贴切的那张 —— **不是挑最新的**；自带的那些一样好用，'
