@@ -8,9 +8,11 @@
 # 怎么用：把下面整段（`- insert:` 起）并进 profile 的 cordis.patch.yml，
 # 与原有的 insert 列表同级即可。改完 `systemctl --user restart dsh-web.service`。
 #
-# 同步方式：改完 profile 那份之后，把 `- insert:` 到下一个 preset 之间那段整块抄回来。
-#   （行号每次都会漂，按内容找：从 `- id: preset-xiaofeiyu` 上面那个 `- insert:` 起，
-#     到 `- id: preset-chonglang` 前一行止。）
+# 同步方式（别手抄，会漂）：改完 profile 那份之后，跑
+#     python3 tools/persona_templates.py --check   # 副本和本机是否一致
+#     python3 tools/persona_templates.py --write   # 用本机现状重写
+#   脚本按内容找块（从 `- id: preset-xiaofeiyu` 到下一个同级 `- id: `），不认行号。
+#   `./start-all.sh check` 里也会带上这一项。
 #
 # 这段里没有号码、没有密钥、没有本机路径 —— 可以公开。
 - insert:
@@ -196,3 +198,4 @@
                 name: '@deepseek-ai/dsh-compaction-basic'
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
+

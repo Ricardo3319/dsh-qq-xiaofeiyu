@@ -29,7 +29,9 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `tools/sticker_packs_index.py` | 把 dsh-meme 图库市场装下来的表情包编成索引（`~/.dsh/qq-sticker-packs.json`），桥每轮随机抽 8 张塞进表情菜单 —— 图库这样才进得了 QQ |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `deploy/preset-xiaofeiyu.yml.template` | **人设的仓库副本** —— 真正生效那份在 `~/.dsh/profiles/web/cordis.patch.yml` 里，profile 重建 / 换机器时照这份还原 |
-| `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `autostart on\|off`。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
+| `deploy/preset-chonglang.yml.template` | **另一套人设的仓库副本**（冲浪小肥鱼 / DeepSeek 娘，用在 887 / 811 那两个群）。⚠ 里面的老爹 QQ 号是 `<老爹QQ>` 占位符，还原前必须换成真实号码 —— 仓库是公开的 |
+| `tools/persona_templates.py` | **人设副本对账**：`--check` 比对仓库副本和本机 profile，`--write` 用本机现状重写（号码自动打码）。按内容找块，不按行号 |
+| `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `url` / `check` / `autostart on\|off`。`check` 是自检：人设副本 ↔ 本机、图库软链、图库索引。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
 | `_stickers/` | 贴纸包（24 张自带 + manifest） |
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
 | `docs/voice.md` | **语音两个方向**：语音条转文字（SenseVoice）、文字转语音条（edge-tts + `qq_voice`）、唱歌（DiffSinger + `qq_sing`）、学歌（哼唱量音高 + `qq_learn_song`）、找谱（联网找谱 + `qq_find_score`）、依赖与坑 |

@@ -7,6 +7,7 @@
 #   ./start-all.sh stop  | down
 #   ./start-all.sh status | st
 #   ./start-all.sh url                 打出当前能打开的 DSH 网页地址（带 token）
+#   ./start-all.sh check | ck          自检：人设模板 ↔ 本机、图库软链、图库索引
 #   ./start-all.sh autostart off       关掉开机自启，以后手动跑本脚本
 #   ./start-all.sh autostart on        恢复开机自启（下次登录生效）
 #
@@ -17,6 +18,9 @@
 #   所以本文件只驱动单元名和端口，不出现任何号码。
 #
 set -uo pipefail
+
+# 脚本自己所在的目录：自检要按仓库根去找 tools/ 和 sticker-packs
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 NAPCAT_UNIT=napcat.service
 DSH_UNIT=dsh-web.service
@@ -47,7 +51,7 @@ bad()  { printf '  %s✗%s %s\n' "$C_BAD" "$C_OFF" "$*"; }
 step() { printf '\n%s%s%s\n' "$C_BOLD" "$*" "$C_OFF"; }
 
 usage() {
-    sed -n '3,11p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'
+    sed -n '3,12p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'
 }
 
 # ---- 基础设施 ----------------------------------------------------------
@@ -205,6 +209,31 @@ cmd_url() {
     return 1
 }
 
+cmd_check() {
+    # 自检：不碰进程，只核对「仓库里的东西」和「本机在跑的那份」有没有走散。
+    # 这三样都是改了本机却忘了同步回仓库、或者换了机器没重建时会静默失效的东西。
+    local fail=0
+    echo "人设模板 ↔ 本机 profile："
+    if python3 -I "$HERE/tools/persona_templates.py" --check; then :; else fail=1; fi
+    echo
+    echo "图库："
+    if [ -d "$HERE/sticker-packs" ]; then
+        ok "sticker-packs 软链在（$(readlink -f "$HERE/sticker-packs" 2>/dev/null)）"
+    else
+        bad "没有 sticker-packs 软链 —— 跑：ln -s \"\$HOME/.dsh/meme-packs\" \"$HERE/sticker-packs\""; fail=1
+    fi
+    local idx="$HOME/.dsh/qq-sticker-packs.json"
+    if [ -f "$idx" ]; then
+        ok "图库索引在：$(python3 -I -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["图"]),"张")' "$idx" 2>/dev/null)"
+        echo "  （装了新图库要重跑：python3 tools/sticker_packs_index.py）"
+    else
+        bad "没有图库索引 —— 跑：python3 tools/sticker_packs_index.py"; fail=1
+    fi
+    echo
+    [ "$fail" = 0 ] && ok "自检通过" || bad "上面有没对上的，按提示处理"
+    return "$fail"
+}
+
 cmd_autostart() {
     case "${1:-}" in
         off)
@@ -231,6 +260,7 @@ case "${1:-start}" in
     stop | down)      require_session; cmd_stop ;;
     status | st)      require_session; cmd_status ;;
     url)              require_session; cmd_url ;;
+    check | ck)       cmd_check ;;                          # 自检不碰进程，登录会话没起也能跑
     autostart)        require_session; shift; cmd_autostart "${1:-}" ;;
     -h | --help | help) usage ;;
     *)
