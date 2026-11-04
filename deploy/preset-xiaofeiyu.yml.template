@@ -196,6 +196,43 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                # [本地补丁 2026-11-04] 把每轮上下文从 8–11 万压到 4–5 万。
+                #   实测（群 887，grok-4.6）：压缩在 12.6 万触发，压完只剩到 7.3 万 ——
+                #   其中约 5 万是 retainRatio 0.16 ×(窗口−输出) 的近期原文，是真正的底座。
+                #   现在把保留量定成绝对值 16k，并把两条在用的路由的触发阈值提前：
+                #   1M 路由 0.06 ⇒ 约 6 万触发；256k 的 grok 0.2 ⇒ 约 5 万触发。
+                #   ⚠ retainTokens 与 retainRatio 互斥，且必须小于每条路由的触发阈值：
+                #     默认 0.8 的路由里阈值最低的是 copilot/auto（128k 窗口）≈4.6 万，仍 >16k。
+                config:
+                  retainTokens: 16000
+                  modelPolicies:
+                    - provider: magpie
+                      model: token-nuaa-edu/deepseek-v4.1-flash
+                      thresholdRatio: 0.06
+                    - provider: magpie
+                      model: token-nuaa-edu/deepseek-flash
+                      thresholdRatio: 0.06
+                    - provider: magpie
+                      model: auto/deepseek-flash
+                      thresholdRatio: 0.06
+                    - provider: magpie
+                      model: auto/deepseek-v4.1-flash
+                      thresholdRatio: 0.06
+                    - provider: magpie-responses
+                      model: grok/grok-4.6
+                      thresholdRatio: 0.2
+                    - provider: magpie-responses
+                      model: grok/grok-4.5
+                      thresholdRatio: 0.2
+                    - provider: magpie-responses
+                      model: grok/grok-4.7
+                      thresholdRatio: 0.2
+                    - provider: magpie-responses
+                      model: grok/grok-4.6@500k
+                      thresholdRatio: 0.2
+                    - provider: magpie-responses
+                      model: grok/grok-4.7@500k
+                      thresholdRatio: 0.2
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
 
