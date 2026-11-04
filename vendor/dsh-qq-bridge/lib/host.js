@@ -3053,6 +3053,7 @@ export function apply(ctx) {
   const 接听中 = new Map()
   const 己方消息 = new Set()   // 自己发出去的 message_id（认「引用了我」用）
   let 自己QQ = ''
+  let 拿号失败记账 = 0        // 「拿不到自己号」这条日志十分钟最多记一次
 
   const 记己方消息 = (id) => {
     己方消息.add(String(id))
@@ -5308,9 +5309,18 @@ export function apply(ctx) {
           //   开了「听所有人」之后，它的回话会被当成群友的话再转进来，一句话能无限套娃。
           //   （我们 10-28 那版用缓存的「自己号」干的是同一件事，2026-10-30 合并时删了，
           //    统一走这条 —— 上游是正式修法，还吞了异常。）
+          // [本地补丁 2026-11-05] 先按 **message_id** 排一遍：她自己的话在群里会作为历史被拉回来，
+          //   而「自己号」那道判断依赖 get_login_info —— 11-04 22:36 那一跳没拿到号，
+          //   于是她把自己刚发的「[引用 欸云朵：…]」当成群友的话收进来，回了一句「？」。
+          //   自己发出去的消息 id 本地就记着（记己方消息），不依赖网络，这道永远有效。
+          if (己方消息.has(String(条.message_id))) continue
           try {
             const 机器人号 = await 拿自己QQ(拉JSON)
             if (机器人号 && String(条.user_id) === String(机器人号)) continue
+            if (!机器人号 && Date.now() - 拿号失败记账 > 10 * 60 * 1000) {
+              拿号失败记账 = Date.now()
+              记账('get_login_info 拿不到自己的 QQ 号 —— 「按号跳过自己发的消息」暂时失效，只剩 message_id 那道')
+            }
           } catch (error) {}
           // ⭐ 1.1.8：这一行自己说了算（只听点名 / 全听），没说才跟全局走
           const 全听 = 行.只听点名 == null ? Boolean(配置.群里听所有人) : !行.只听点名
