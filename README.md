@@ -27,6 +27,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.5.0 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释。⚠ 本地包名仍叫 `dsh-qq-bridge`（上游已改名 `dsh-qq-link`）—— 见文末许可一节 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
 | `tools/sticker_packs_index.py` | 把 dsh-meme 图库市场装下来的表情包编成索引（`~/.dsh/qq-sticker-packs.json`），桥每轮随机抽 8 张塞进表情菜单 —— 图库这样才进得了 QQ |
+| `tools/ctx_report.py` | 把 QQ 四间会话的**上下文曲线**画成一页 HTML（`~/.dsh/ctx-report.html`）：每次请求多大、由什么组成、压缩把水位压到哪儿。数据来自 magpie 路由日志，`--days N` 可调范围 |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `deploy/preset-xiaofeiyu.yml.template` | **人设的仓库副本** —— 真正生效那份在 `~/.dsh/profiles/web/cordis.patch.yml` 里，profile 重建 / 换机器时照这份还原 |
 | `deploy/preset-chonglang.yml.template` | **另一套人设的仓库副本**（冲浪小肥鱼 / DeepSeek 娘，用在 887 / 811 那两个群）。⚠ 里面的老爹 QQ 号是 `<老爹QQ>` 占位符，还原前必须换成真实号码 —— 仓库是公开的 |
