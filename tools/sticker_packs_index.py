@@ -10,7 +10,10 @@ QQ 这条路上桥只认「相对路径的图片文件」；模型又不可能�
     python3 tools/sticker_packs_index.py --dir DIR  # 扫别的目录
 
 输出：~/.dsh/qq-sticker-packs.json
-     {"图": [{"相对": "sticker-packs/<包>/memes/<tag>/<文件>", "情绪": "...", "包": "..."}]}
+     {"图": [{"相对": "sticker-packs/<包>/memes/<tag>/<文件>", "别号": "p1234",
+            "情绪": "...", "包": "..."}]}
+
+别号是给模型抄的短名字：菜单里只给 `p1234`，桥按别号翻回整条路径（5 个字符，抄不错）。
 
 ⚠ 相对路径里的 `sticker-packs/` 是仓库根目录下的一个软链，指向 ~/.dsh/meme-packs，
    这样桥按「图片根目录」（默认就是仓库根）就能找到图，不用改配置。
@@ -21,6 +24,7 @@ import json
 import os
 import sys
 import time
+import zlib
 
 IMG = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
 
@@ -75,6 +79,19 @@ def main():
         return 1
 
     图们 = []
+    用过的 = {}
+
+    def 取别号(相对):
+        """p + 4 位数字，按路径做 crc，重复就往后挪 —— 同一张图每次生成的别号稳定。"""
+        n = zlib.crc32(相对.encode('utf-8')) % 10000
+        for _ in range(10000):
+            号 = 'p%04d' % n
+            if 号 not in 用过的:
+                用过的[号] = 相对
+                return 号
+            n = (n + 1) % 10000
+        raise SystemExit('别号用完了')
+
     for 包 in sorted(os.listdir(a.dir)):
         根 = os.path.join(a.dir, 包, 'memes')
         if not os.path.isdir(根):
@@ -86,8 +103,10 @@ def main():
             for 文件 in sorted(os.listdir(目录)):
                 if not 文件.lower().endswith(IMG):
                     continue
+                相对 = f'sticker-packs/{包}/memes/{标签}/{文件}'
                 图们.append({
-                    '相对': f'sticker-packs/{包}/memes/{标签}/{文件}',
+                    '相对': 相对,
+                    '别号': 取别号(相对),
                     '情绪': 情绪.get(标签.lower(), 标签),
                     '包': 包,
                 })

@@ -1290,20 +1290,38 @@ export function apply(ctx) {
   //   文件一个字节都不搬：仓库根下有个 `sticker-packs/` 软链指向 ~/.dsh/meme-packs，
   //   于是这些图跟 `_stickers/` 一样按「图片根目录」就能找到。
   let 图库缓存 = { at: -1, 条: [] }
-  function 图库抽样(几个) {
+  /** 读图库索引（按 mtime 缓存）。菜单抽样和「别号→路径」都用这一份。 */
+  function 图库索引() {
     try {
       const 文件 = join(目录, 'qq-sticker-packs.json')
       const 信 = statSync(文件, { throwIfNoEntry: false })
-      if (!信) return ''
+      if (!信) return []
       if (信.mtimeMs !== 图库缓存.at) {
         const j = JSON.parse(readFileSync(文件, 'utf8'))
         图库缓存 = { at: 信.mtimeMs, 条: Array.isArray(j && j.图) ? j.图 : [] }
       }
     } catch (错误) {
       图库缓存 = { at: -1, 条: [] }
-      return ''
+      return []
     }
-    const 条 = 图库缓存.条
+    return 图库缓存.条
+  }
+  /**
+   * [本地补丁 2026-11-04] 菜单里给图库图**发别号**（p1234），不给整条中文路径。
+   *   起因：11-03 接好图库之后，330 张里她一张都没发过（会话里 `sticker-packs/` 出现 0 次），
+   *   而她发 `_stickers/xxx.jpg` 有 380 多次 —— 长中文路径她不敢抄，怕写错发不出去。
+   *   别号只有 5 个字符，抄错的代价也低；识别不了还有原来的整条路径兜底。
+   */
+  function 按别号找(值) {
+    const m = /^[pP](\d{3,4})$/.exec(String(值 || '').trim())
+    if (!m) return ''
+    // p644 / p0644 都认：统一补成 4 位再查
+    const 号 = 'p' + String(Number(m[1])).padStart(4, '0')
+    const 条 = 图库索引().find((x) => String(x.别号 || '') === 号)
+    return (条 && 条.相对) || ''
+  }
+  function 图库抽样(几个) {
+    const 条 = 图库索引()
     if (!条.length) return ''
     const 挑 = []
     const 用过 = new Set()
@@ -1314,7 +1332,7 @@ export function apply(ctx) {
       用过.add(i)
       挑.push(条[i])
     }
-    return 挑.map((x) => x.相对 + (x.情绪 ? '（' + x.情绪 + '）' : '')).join(' · ')
+    return 挑.map((x) => (x.别号 || x.相对) + (x.情绪 ? '（' + x.情绪 + '）' : '')).join(' · ')
   }
   const 读水位 = () => {
     try {
@@ -1418,8 +1436,10 @@ export function apply(ctx) {
    */
   function 找本地图(p, 配置) {
     // [本地补丁 2026-11-04] 兜底：万一还有别的入口把 `<路径>` 原样递进来（抠正文图已经先剥一层了）
-    const 原 = String(p || '').trim().replace(/^<(.+)>$/, '$1').trim()
-    if (!原) return ''
+    const 原0 = String(p || '').trim().replace(/^<(.+)>$/, '$1').trim()
+    if (!原0) return ''
+    // 图库发的是别号（p1234）：先翻成真正的相对路径，再按「图片根目录」找
+    const 原 = 按别号找(原0) || 原0
     const 试 = []
     // [本地补丁 2026-10-28] 模型爱写成 `/ _stickers/xxx.gif`（多一个前导斜杠）。
     //   以前一律当绝对路径，于是直接去根目录 / 找，必然 ENOENT。
@@ -1811,7 +1831,10 @@ export function apply(ctx) {
     }
     const 抠过 = 配置.发图 ? 抠正文图(待发文字) : { 净文字: 待发文字, 图: [] }
     const 几张 = (Array.isArray(图们) ? 图们.length : 0) + 抠过.图.length
-    const 图标 = 几张 ? `（还有 ${几张} 张图）` : ''
+    // [本地补丁 2026-11-04] 日志带上她写的图名/别号 —— 不然「发了图」但看不出发的是哪一类，
+    //   图库到底有没有被用上，只能靠翻会话文件。
+    const 图名们 = (抠过.图 || []).slice(0, 2).map((x) => String(x.value).split(/[\\/]/).pop())
+    const 图标 = 几张 ? `（还有 ${几张} 张图${图名们.length ? '：' + 图名们.join(', ') : ''}）` : ''
     const 净文 = String(抠过.净文字 || '')
     if (配置.试运行) {
       return 记账(`试运行：本来要发到 QQ →「${净文.slice(0, 40)}${净文.length > 40 ? '…' : ''}」${图标}`)
@@ -2827,7 +2850,10 @@ export function apply(ctx) {
           + 'bixin比心 maozhua卖萌 zaoshanghao早安 qiurao求饶 yun晕 zhenjing惊到 '
           + 'haixiu害羞 toukan偷看 wuyu无语 shuijiao睡觉 xia吓到 tangping躺平'
         const s = 表情库.摘要()
-        const 图库 = 图库抽样(8)
+        // [本地补丁 2026-11-04] 8 → 12 张，并且改成发**别号**（p1234）而不是整条中文路径：
+        //   实测 11-03 接好之后图库一张没被发过（会话里 `sticker-packs/` 出现 0 次），
+        //   而 `_stickers/xxx.jpg` 有 380 多次 —— 她不敢抄长中文路径。别号只 5 个字符。
+        const 图库 = 图库抽样(12)
         return String.fromCharCode(10) + String.fromCharCode(10)
           + '（表情包菜单。自带的 24 张：' + 自带 + ' —— 写成 `_stickers/名字.jpg`。）'
           + (s
@@ -2835,12 +2861,12 @@ export function apply(ctx) {
               + '。这几张要**原样抄**整条路径，`收_` 前缀和扩展名都不能少。）'
             : '')
           + (图库
-            ? String.fromCharCode(10) + '（图库里这一轮抽到的：' + 图库
-              + '。也是原样抄整条路径；下一轮抽到的会换，别硬记。）'
+            ? String.fromCharCode(10) + '（图库这一轮抽到 12 张，**写成 `p编号` 就行，不用抄路径**：' + 图库
+              + '。这些是群里的新图，情绪对得上就优先用它们；下一轮换一批，别硬记。）'
             : '')
           + String.fromCharCode(10)
-          + '（挑情绪最贴切的那张 —— **不是挑最新的**；自带的那些一样好用，'
-          + '别因为新收了几张就整场只用它们。也别连着两条用同一张。'
+          + '（挑情绪最贴切的那张 —— **不是挑最新的**；自带、自收、图库三类都能用，'
+          + '别整场只用同一类。也别连着两条用同一张。'
           + '想加新的就调 remember_sticker。'
           // [本地补丁 2026-10-31] 原生小黄脸：模型在入站看到的就是这个写法，顺着回发即可。
           + '想发 QQ 原生小黄脸（不是图片贴纸）就写 `[表情:名字]`，名字用：偷看 偷笑 呲牙 白眼 '
