@@ -1131,8 +1131,12 @@ export function 图片段(base64) {
 export function 抠正文图(文字) {
   const 图 = []
   const 净文字 = String(文字 || '')
-    .replace(/!\[[^\]]*\]\(\s*([^)\s]+)\s*\)/g, (全, 路径) => {
-      const p = String(路径 || '').trim()
+    // [本地补丁 2026-11-04] `![名](<路径>)` 是 CommonMark 里「路径带特殊字符」的合法写法，
+    //   模型真的会这么写：11-04 凌晨三条图库表情、还有 `<stickers/zaoshanghao.jpg>`，
+    //   全因为找图时连尖括号一起拼路径而 ENOENT —— 图库那 6 次尝试**一张都没发出去**。
+    //   这里连 `<...>` 一起认（里面还能有空格），取出来的路径不带尖括号。
+    .replace(/!\[[^\]]*\]\(\s*(?:<([^>]*)>|([^)\s]+))\s*\)/g, (全, 带尖, 裸) => {
+      const p = String(带尖 != null ? 带尖 : (裸 || '')).trim()
       if (!p) return ''
       if (/^https?:\/\//i.test(p)) {
         if (!图.some((x) => x.value === p)) 图.push({ kind: 'url', value: p })
@@ -1413,7 +1417,8 @@ export function apply(ctx) {
    * 找到就返回绝对路径。
    */
   function 找本地图(p, 配置) {
-    const 原 = String(p || '').trim()
+    // [本地补丁 2026-11-04] 兜底：万一还有别的入口把 `<路径>` 原样递进来（抠正文图已经先剥一层了）
+    const 原 = String(p || '').trim().replace(/^<(.+)>$/, '$1').trim()
     if (!原) return ''
     const 试 = []
     // [本地补丁 2026-10-28] 模型爱写成 `/ _stickers/xxx.gif`（多一个前导斜杠）。
@@ -1455,6 +1460,25 @@ export function apply(ctx) {
         const 底 = basename(全)
         const 补 = join(目录2, '收_' + 底)
         if (existsSync(补)) { 记账('图名补了「收_」前缀才找到：' + 底 + ' → 收_' + 底); return 补 }
+      } catch (error) {}
+    }
+    // [本地补丁 2026-11-04] **反向**兜底：模型会把自带的 `deyi.jpg` 记成 `收_deyi.jpg`
+    //   （自带的没有 `收_` 前缀，它按「新收的」格式拼）。实测 11-03 到 11-04 一共 19 次
+    //   全是 `_stickers/收_deyi.jpg` 找不到 —— 每次都白丢一张图，她自己也看不出来。
+    for (const 全 of 试) {
+      try {
+        const 底 = basename(全)
+        if (!底.startsWith('收_')) continue
+        const 补 = join(dirname(全), 底.slice(2))
+        if (existsSync(补)) { 记账('图名去掉了多余的「收_」前缀才找到：' + 底 + ' → ' + 底.slice(2)); return 补 }
+      } catch (error) {}
+    }
+    // [本地补丁 2026-11-04] 目录名漏了下划线：`stickers/zaoshanghao.jpg` → `_stickers/...`
+    for (const 全 of 试) {
+      try {
+        if (!/[\\/]stickers[\\/]/.test(全)) continue
+        const 补 = 全.replace(/([\\/])stickers([\\/])/, '$1_stickers$2')
+        if (existsSync(补)) { 记账('图路径补了目录的下划线才找到：' + 原 + ' → ' + 补); return 补 }
       } catch (error) {}
     }
     记账('找不到这张图：' + 原 + '（试过：' + 试.slice(0, 4).join(' ｜ ') + ' 等 ' + 试.length + ' 个位置；可在设置里填「图片根目录」）')
@@ -2582,7 +2606,7 @@ export function apply(ctx) {
     } catch (error) {}
   }
 
-  async function 转发行们(段, 拉任意, 图袋, 层, 预算) {
+  async function 转发行们(段, 拉任意, 图袋, 层, 预算, 外层id = '') {
     const 缩 = '  '.repeat(层 + 1)
     const d = (段 && 段.data) || {}
     const id = String(d.id != null ? d.id : (d.message_id != null ? d.message_id : (d.content != null ? d.content : '')))
@@ -2593,20 +2617,42 @@ export function apply(ctx) {
       return 行们0.map((x) => (x.startsWith('  ') ? x : 缩 + x))
     }
     let 节点们 = []
-    try {
-      for (const 体 of [{ message_id: id }, { id }]) {
-        const 结果 = await 拉任意('get_forward_msg', 体)
+    const 试着拉 = async (id2) => {
+      for (const 体 of [{ message_id: id2 }, { id: id2 }]) {
+        const 结果 = await 拉任意('get_forward_msg', 体, { 记账失败: true })
         const 候选 = (结果 && (结果.messages || 结果.message)) || null
-        if (Array.isArray(候选) && 候选.length) { 节点们 = 候选; break }
+        if (Array.isArray(候选) && 候选.length) return 候选
       }
-    } catch (error) {
-      // 拉不到（NapCat 报错 / 超时）也按「取不到」缓存，别再每 2 秒重拉
-      存转发缓存(id, '[合并转发的聊天记录（内容取不到）]')
-      return [缩 + '[合并转发的聊天记录（内容取不到）]']
+      return []
+    }
+    try { 节点们 = await 试着拉(id) } catch (error) { 节点们 = [] }
+    // [本地补丁 2026-11-04] 第二手：拿**外层那条消息**再问一次 get_msg。
+    //   11-04 12:57 那条合并转发直接拿段里的 id 问是空的（只剩一句「内容取不到」，
+    //   她只能回「这条合并记录我打不开」），同一时段 12:59 另一条却读得出来 ——
+    //   说明不是接口不支持，是那个 id 问不出来。外层消息里还带着 resid / content，
+    //   换一个去问往往能拿到。第二手不成才认输。
+    if (!节点们.length && 外层id) {
+      try {
+        const 外 = await 拉任意('get_msg', { message_id: Number(外层id) || 外层id }, { 记账失败: true })
+        const 段们2 = Array.isArray(外 && 外.message) ? 外.message : []
+        for (const 段2 of 段们2) {
+          if (String((段2 && 段2.type) || '') !== 'forward') continue
+          const d2 = (段2 && 段2.data) || {}
+          for (const 候 of [d2.resid, d2.id, d2.content, d2.message_id]) {
+            const 值 = String(候 == null ? '' : 候).trim()
+            if (!值 || 值 === id) continue
+            节点们 = await 试着拉(值)
+            if (节点们.length) { 记账('合并转发换 id 取到了：' + id + ' → ' + 值); break }
+          }
+          if (节点们.length) break
+        }
+      } catch (error) { 记账('合并转发第二手失败：' + String((error && error.message) || error)) }
     }
     if (!节点们.length) {
-      存转发缓存(id, '[合并转发的聊天记录（内容取不到）]')
-      return [缩 + '[合并转发的聊天记录（内容取不到）]']
+      // 拉不到（NapCat 报错 / 超时 / 老记录没缓存）也按「取不到」缓存，别再每 2 秒重拉
+      const 话 = '[合并转发的聊天记录（内容取不到 —— 多半是转来的老记录，NapCat 那边已经没缓存了）]'
+      存转发缓存(id, 话)
+      return [缩 + 话]
     }
     const 行 = [缩 + '[合并转发的聊天记录 · 共 ' + 节点们.length + ' 条]']
     for (const 节 of 节点们.slice(0, 12)) {
@@ -2671,8 +2717,8 @@ export function apply(ctx) {
   }
 
   /** 一条合并转发 → 整段文字（行数 / 字数都有上限，别把上下文吃光） */
-  async function 转发文字(段, 拉任意, 图袋) {
-    const 行们 = await 转发行们(段, 拉任意, 图袋, 0, { 行: 40 })
+  async function 转发文字(段, 拉任意, 图袋, 外层id = '') {
+    const 行们 = await 转发行们(段, 拉任意, 图袋, 0, { 行: 40 }, 外层id)
     let 文 = 行们.join(String.fromCharCode(10))
     if (文.length > 2500) 文 = 文.slice(0, 2500) + String.fromCharCode(10) + '…（太长，剩下的没展开）'
     return 文
@@ -4952,11 +4998,21 @@ export function apply(ctx) {
       } catch (error) { return [] }
     }
     // 合并转发 / get_record 返回 data，和历史接口的 data.messages 不同。
-    const 拉任意 = async (action, 体) => {
+    // [本地补丁 2026-11-04] 加「失败要说一声」：原来异常和 retcode 一律吞掉，
+    //   11-04 12:57 那条合并转发只在日志里留下「内容取不到」，NapCat 到底回了什么查无对证。
+    const 拉任意 = async (action, 体, 选) => {
+      const 报 = 选 && 选.记账失败
+        ? (文) => 记账(action + ' 失败：' + 文 + '（参数 ' + 掐短(JSON.stringify(体 || {}), 160) + '）')
+        : () => {}
       try {
         const j = await 拉JSON(action, 体)
-        return (j && j.status === 'ok' && j.data) || null
-      } catch (error) { return null }
+        const 好 = !!(j && j.status === 'ok' && j.data)
+        if (!好) 报(掐短(JSON.stringify(j || null), 300))
+        return 好 ? j.data : null
+      } catch (error) {
+        报(String((error && error.message) || error))
+        return null
+      }
     }
     // ⚠️ 2026-10-25（用户报「读不了 B站 卡片 / 转发记录」）：以前这里只看 text / image / mface，
     //    卡片和合并转发既没文字也没图 ⇒ 整条被当成空消息丢掉。现在它们也会变成文字。
@@ -5045,7 +5101,7 @@ export function apply(ctx) {
           // ⭐ 转发里的图**跟着「收图」这个开关走**（不另加开关）：开着收几张，关着只标 [图片]
           const 袋 = 配置.收图 ? [] : null
           try {
-            const 文 = await 转发文字(段, 拉任意, 袋)
+            const 文 = await 转发文字(段, 拉任意, 袋, 条.message_id)
             文们.push(文)
             if (Array.isArray(袋) && 袋.length) {
               const 余量 = Math.max(0, 收图上限() - 图们.length)

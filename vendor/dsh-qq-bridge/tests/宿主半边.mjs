@@ -147,6 +147,17 @@ const 正文 = 模.提取正文({ content: [块('reasoning', '想一下'), 块('
   const r = 模.抠正文图('![](https://x.com/a.png)纯图')
   return r.净文字 === '纯图' && r.图.length === 1 && r.图[0].kind === 'url'
 })())
+// [本地补丁 2026-11-04] 模型真会写成 `![x](<路径>)`（CommonMark 里带特殊字符的合法写法）。
+//   11-04 凌晨图库那 3 次尝试全因为尖括号一起进了路径而 ENOENT —— 一张都没发出去。
+报('抠正文图：路径被尖括号包着也认，交出去时去掉括号', (() => {
+  const r = 模.抠正文图('哼\n![x](<sticker-packs/deepseek-maojing/memes/shy/抱抱猪猪.webp>)')
+  return r.净文字 === '哼' && r.图.length === 1
+    && r.图[0].value === 'sticker-packs/deepseek-maojing/memes/shy/抱抱猪猪.webp'
+})())
+报('抠正文图：尖括号里带空格也认（普通写法会在这里截断）', (() => {
+  const r = 模.抠正文图('![x](<_stickers/带 空格.webp>)')
+  return r.图.length === 1 && r.图[0].value === '_stickers/带 空格.webp'
+})())
 
 // ⭐ 1.5.0：正文里的普通链接当文件发（图片是 `![名](路径)`，文件是 `[名](路径)`）
 报('抠正文文件：本地路径抠出来，正文留干净的', (() => {
