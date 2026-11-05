@@ -266,6 +266,21 @@ if (发了[0]) {
   报('贴纸轮换：第一轮带图，第二轮不重复同一张', 第一轮图 === 1 && 第二轮图 === 0,
     `图 ${第一轮图}/${第二轮图}，请求 ${第一轮总}/${第二轮总}`)
   报('贴纸轮换：被拦的是图，第二轮文字照发', 第二轮总 >= 1, String(第二轮总))
+
+  // [本地补丁 2026-11-05] 图库别号被写成 `_stickers/p6446.jpg` 也要认 ——
+  //   模型把「自带那 24 张」的写法套到别号上了，这是图库一直发不出去的真因。
+  mkdirSync(join(贴纸根, 'sticker-packs', 'fake'), { recursive: true })
+  writeFileSync(join(贴纸根, 'sticker-packs', 'fake', 'a.jpg'),
+    Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))
+  writeFileSync(join(家, 'qq-sticker-packs.json'), JSON.stringify({
+    生成时间: 'x', 目录: 贴纸根, 图: [{ 相对: 'sticker-packs/fake/a.jpg', 别号: 'p6446', 情绪: '测试' }],
+  }))
+  const 前图库图 = 图数()
+  监听[0](会话, 助手消息(132, 1, [块('text', '看看这个\n![x](_stickers/p6446.jpg)')], false))
+  监听[0](会话, 转完(132))
+  await new Promise((r) => setTimeout(r, 40))
+  报('图库别号带 _stickers/ 前缀和 .jpg 也认得', 图数() - 前图库图 === 1, `图 ${图数() - 前图库图}`)
+
   writeFileSync(join(家, 'qq-bridge-config.json'), JSON.stringify(旧配置))
 }
 

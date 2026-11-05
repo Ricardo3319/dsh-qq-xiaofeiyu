@@ -1430,9 +1430,13 @@ export function apply(ctx) {
    *   别号只有 5 个字符，抄错的代价也低；识别不了还有原来的整条路径兜底。
    */
   function 按别号找(值) {
-    const m = /^[pP](\d{3,4})$/.exec(String(值 || '').trim())
+    // [本地补丁 2026-11-05] 模型老把别号写成 `_stickers/p8590.jpg`（自带的写法套上来了），
+    //   原来只认光秃秃的 `p8590` ⇒ 图库的贴纸一次都没发出去过（日志里全是「找不到这张图」）。
+    //   现在剥掉目录、尖括号和扩展名再认；`p644` / `p0644` 也照旧统一补 4 位。
+    const 净 = String(值 || '').trim().replace(/^<|>$/g, '').replace(/\\/g, '/')
+    const 底 = 净.split('/').pop() || ''
+    const m = /^[pP](\d{3,4})(?:\.[A-Za-z0-9]{1,6})?$/.exec(底)
     if (!m) return ''
-    // p644 / p0644 都认：统一补成 4 位再查
     const 号 = 'p' + String(Number(m[1])).padStart(4, '0')
     const 条 = 图库索引().find((x) => String(x.别号 || '') === 号)
     return (条 && 条.相对) || ''
@@ -1663,10 +1667,12 @@ export function apply(ctx) {
    * `收_` 前缀去掉 —— 兜底会把 `收_deyi.jpg` 翻成 `deyi.jpg`，两者必须算同一张。
    */
   function 贴纸键(值) {
-    let s = String(值 || '').trim()
-    if (/^[pP]\d{3,4}$/.test(s)) s = 按别号找(s) || s
+    const 原 = String(值 || '').trim()
+    const 别名 = 按别号找(原)
+    const s = 别名 || 原
     const low = s.replace(/\\/g, '/').toLowerCase()
-    if (!/(^|\/)_stickers\/|(^|\/)sticker-packs\//.test(low)) return ''
+    const 像贴纸 = Boolean(别名) || /(^|\/)_stickers\/|(^|\/)sticker-packs\//.test(low)
+    if (!像贴纸) return ''
     const 段 = low.split('/')
     const 文件 = String(段.pop() || '').replace(/^收_/, '')
     return [...段, 文件].join('/')
@@ -1726,7 +1732,14 @@ export function apply(ctx) {
       let 值 = 源.value
       const 换 = 原图路径('p:' + 清路径(值).toLowerCase())
       if (换) 值 = 换
-      const 全 = 找本地图(值, 配置) || 值
+      const 找到 = 找本地图(值, 配置)
+      // [本地补丁 2026-11-05] 写了别号却没找到（号抄错 / 是上一轮换掉的旧号）→ 下一轮说一声，
+      //   不然它只会反复贴同一串发不出去的路径，人那边什么都收不到。
+      if (!找到 && /[pP]\d{3,4}/.test(String(值))) {
+        贴纸提醒.set(贴纸会话, '（上一轮 `' + 值 + '` 没找到，那张没发出去；'
+          + '图库的图**只写别号本身**（例如 `p8590`），别加 `_stickers/`、也别加 `.jpg`。）')
+      }
+      const 全 = 找到 || 值
       try {
         const buf = readFileSync(全)
         if (buf.length > 最大) { 记账(`这张图太大（${Math.round(buf.length / 1048576)}MB），跳过`); return }
@@ -3063,7 +3076,8 @@ export function apply(ctx) {
               + '。这几张要**原样抄**整条路径，`收_` 前缀和扩展名都不能少。）'
             : '')
           + (图库
-            ? String.fromCharCode(10) + '（图库这一轮抽到 12 张，**写成 `p编号` 就行，不用抄路径**：' + 图库
+            ? String.fromCharCode(10) + '（图库这一轮抽到 12 张。这些**只写别号本身**（`p编号`，5 个字符），'
+              + '**别加 `_stickers/`、别加 `.jpg`**，也别去抄 `sticker-packs/` 的路径 —— 写全了反而发不出去：' + 图库
               + '。这些是群里的新图，情绪对得上就优先用它们；下一轮换一批，别硬记。）'
             : '')
           + String.fromCharCode(10)
