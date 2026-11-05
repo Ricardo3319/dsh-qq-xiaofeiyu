@@ -1890,8 +1890,10 @@ export function apply(ctx) {
       const 要群 = 行.类型 === '群' && 配置.转群
       if (要私聊) {
         for (let i = 0; i < 段们.length; i++) {
-          const 体 = 私人消息体(段们[i])
-          体.user_id = Number(行.号码)
+          // [本地补丁 2026-11-05] 私聊也要走一遍分段转换。以前只有群里调 拆成消息段，
+          //   私聊直接把 `[表情:偷看]` 当文字发出去 —— 它写了、人也看见那串字，但没有表情。
+          const 段们2 = 拆成消息段(段们[i], { 允许全体: false })
+          const 体 = { user_id: Number(行.号码), message: 段们2 }
           出.push(await 发一个(配置.NapCat, 'send_private_msg', 体, 配置))
           if (i < 段们.length - 1) await new Promise((r) => setTimeout(r, 发段延迟))
         }
