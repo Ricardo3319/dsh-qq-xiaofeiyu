@@ -8,8 +8,8 @@
 //
 // ⚠ 安全默认：总开关 = false、试运行 = true —— 不手动打开，一句都不会真的发到 QQ。
 
-import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync, unlinkSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { readFileSync, writeFileSync, appendFileSync, statSync, mkdirSync, existsSync, createWriteStream, renameSync, readdirSync, unlinkSync, realpathSync, mkdtempSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, dirname, basename, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -106,6 +106,21 @@ const 默认配置 = {
   //   默认关，等声库和推理环境装好、实测过再打开。
   允许唱歌: false,
   唱歌解释器: '', // 留空 = <DSH_HOME>/qq-sing/.venv/bin/python
+  // [本地补丁 2026-11-05] 现做表情。引擎是 MemeCrafters/meme-generator（跟
+  //   nonebot-plugin-memes 同一个），不是图库里那些静图。默认开，环境没装好时
+  //   工具会直接说没装好，不会往群里发失败的半张图。
+  允许制表情: true,
+  制表情解释器: '', // 留空 = <DSH_HOME>/qq-meme/.venv/bin/python
+  制表情冷却秒: 15,
+  // [本地补丁 2026-11-05] AI 生图（Grok Imagine）。跟 qq_meme 的模板表情分开：
+  //   模板是「摸头 / 悲报」这种固定底图，这里是从一句话画一张新图。
+  //   走本机 magpie 的 OpenAI 兼容接口，模型默认 grok/grok-imagine-image。
+  //   ⚠ 生图要花钱/耗订阅额度，冷却比表情长得多，而且一轮最多一张。
+  允许生图: true,
+  生图地址: 'http://127.0.0.1:3425/v1/images/generations',
+  生图模型: 'grok/grok-imagine-image',
+  生图冷却秒: 120,
+  生图超时秒: 180,
   唱歌声库: '', // 留空 = <DSH_HOME>/qq-sing/voicebanks/hutao
   唱歌旋律: '小星星',
   唱歌步数: 50, // 声学扩散步数；越大越慢、细节越多。50 是上游 CLI 默认，短歌约 9 秒
@@ -600,6 +615,16 @@ function 归一化(原始) {
     主动语音冷却秒: 数(混.主动语音冷却秒, 默认配置.主动语音冷却秒, 0, 86400),
     允许唱歌: 布(混.允许唱歌, 默认配置.允许唱歌),
     唱歌解释器: 字(混.唱歌解释器).slice(0, 400),
+    // [本地补丁 2026-11-05] 现做表情。漏在这张白名单里的话，设置页一保存就被扔掉。
+    允许制表情: 布(混.允许制表情, 默认配置.允许制表情),
+    制表情解释器: 字(混.制表情解释器).slice(0, 400),
+    制表情冷却秒: 数(混.制表情冷却秒, 默认配置.制表情冷却秒, 0, 3600),
+    // [本地补丁 2026-11-05] AI 生图。漏在这张白名单里的话，设置页一保存就被扔掉。
+    允许生图: 布(混.允许生图, 默认配置.允许生图),
+    生图地址: 字(混.生图地址).slice(0, 400) || 默认配置.生图地址,
+    生图模型: 字(混.生图模型).slice(0, 120) || 默认配置.生图模型,
+    生图冷却秒: 数(混.生图冷却秒, 默认配置.生图冷却秒, 0, 3600),
+    生图超时秒: 数(混.生图超时秒, 默认配置.生图超时秒, 10, 600),
     唱歌声库: 字(混.唱歌声库).slice(0, 400),
     唱歌旋律: 字(混.唱歌旋律).slice(0, 40) || 默认配置.唱歌旋律,
     唱歌步数: 数(混.唱歌步数, 默认配置.唱歌步数, 5, 100),
@@ -655,7 +680,12 @@ function 归一化(原始) {
 
 // ---------- 图片小工具（两个方向共用）----------
 // ⭐ 2026-10-22 加：QQ 的图片段（OneBot）可能给 http url、本地路径、base64 三种形态，
-//    这里统一成字节；大小和类型都在收的时候判，判不了就当 jpeg。
+//    这里统一成字节；大小和类型都在收的时候判，存盘时判不了就当 jpeg。
+// [本地补丁 2026-11-05] 交给模型的那一份不能再这样。会话走的是 Grok，它只收
+//   JPG / PNG / WebP / ICO。GIF（摸头这类动图）或者一段根本不是图的字节被当成图
+//   塞进去，接口回 400「Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image」，
+//   而且这张图留在历史里 —— 后面每一轮、包括压缩，都会带着它再失败一次。
+//   GIF 抽第一帧变成 PNG 再给模型看；原图另存，发回 QQ 时还是动的。
 
 /** 收进来的图存一份到这儿（纯文本模型看不见图，至少能从文字里找到路径） */
 /**
@@ -742,7 +772,7 @@ function 原图路径(键) {
   try { return existsSync(p) ? p : '' } catch (error) { return '' }
 }
 
-const 扩展 = (类) => (类 === 'image/png' ? 'png' : 类 === 'image/gif' ? 'gif' : 类 === 'image/webp' ? 'webp' : 'jpg')
+const 扩展 = (类) => (类 === 'image/png' ? 'png' : 类 === 'image/gif' ? 'gif' : 类 === 'image/webp' ? 'webp' : 类 === 'image/x-icon' ? 'ico' : 'jpg')
 
 function 看图类(字节) {
   try {
@@ -751,6 +781,90 @@ function 看图类(字节) {
     if (字节[0] === 0x52 && 字节[1] === 0x49 && 字节[8] === 0x57) return 'image/webp'
   } catch (error) {}
   return 'image/jpeg'
+}
+
+/**
+ * 这截字节能不能直接交给 Grok 看。
+ * 给模型 = false 时调用方不要把它放进 attachments：GIF 先抽静帧，别的就只留文字。
+ * @returns {{类: string, 给模型: boolean}}
+ */
+export function 认模型图(字节) {
+  const b = 字节
+  if (!b || b.length < 12) return { 类: '', 给模型: false }
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return { 类: 'image/png', 给模型: true }
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { 类: 'image/jpeg', 给模型: true }
+  if (b.slice(0, 4).toString() === 'RIFF' && b.slice(8, 12).toString() === 'WEBP') return { 类: 'image/webp', 给模型: true }
+  // ICO / CUR。Grok 认 ICO；QQ 几乎不发这个，认出来也别丢。
+  if (b[0] === 0x00 && b[1] === 0x00 && (b[2] === 0x01 || b[2] === 0x02) && b[3] === 0x00) return { 类: 'image/x-icon', 给模型: true }
+  if (b.slice(0, 3).toString() === 'GIF') return { 类: 'image/gif', 给模型: false }
+  return { 类: '', 给模型: false }
+}
+
+/**
+ * 从 magpie 生图接口的返回里取图。
+ * 只认 data[0].b64_json，或**本机 / 同源**的 URL —— 别把这个工具变成任意 URL 抓取器。
+ * @returns {Promise<Buffer|null>}
+ */
+export async function 生图取字节(数据, 生图地址) {
+  const 项 = 数据 && Array.isArray(数据.data) ? 数据.data[0] : null
+  if (!项 || typeof 项 !== 'object') return null
+  if (typeof 项.b64_json === 'string' && 项.b64_json) {
+    try {
+      const b = Buffer.from(项.b64_json, 'base64')
+      return b.length ? b : null
+    } catch (error) { return null }
+  }
+  if (typeof 项.url === 'string' && /^https?:\/\//i.test(项.url)) {
+    try {
+      const u = new URL(项.url)
+      const 源 = new URL(String(生图地址 || ''))
+      const 本地 = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)
+      if (!本地 && u.host !== 源.host) return null
+      const r = await fetch(u, { signal: AbortSignal.timeout(20000) })
+      if (!r.ok) return null
+      return Buffer.from(await r.arrayBuffer())
+    } catch (error) { return null }
+  }
+  return null
+}
+
+/** GIF → 第一帧 PNG。抽不出来就返回 null，调用方不许把 GIF 塞给模型。 */
+export async function 动图抽静帧(字节) {
+  const ffmpeg = await 找ffmpeg()
+  if (!ffmpeg || !字节 || !字节.length) return null
+  let 临时 = ''
+  try {
+    临时 = mkdtempSync(join(tmpdir(), 'qq-gif-'))
+    const 入 = join(临时, 'in.gif')
+    writeFileSync(入, 字节)
+    const png = await new Promise((resolve) => {
+      const 块 = []
+      let 总量 = 0
+      let 子 = null
+      try {
+        子 = spawn(ffmpeg, ['-v', 'error', '-i', 入, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'], { windowsHide: true })
+      } catch (error) { return resolve(null) }
+      let 完了 = false
+      const 收 = (值) => { if (完了) return; 完了 = true; clearTimeout(定时); resolve(值) }
+      const 定时 = setTimeout(() => { try { 子.kill() } catch (error) {} }, 8000)
+      子.stdout.on('data', (c) => {
+        总量 += c.length
+        if (总量 <= 4_000_000) 块.push(c)
+      })
+      子.on('error', () => 收(null))
+      子.on('close', () => {
+        if (总量 > 4_000_000) return 收(null)
+        const buf = Buffer.concat(块)
+        const 认 = 认模型图(buf)
+        收(认.给模型 && 认.类 === 'image/png' ? buf : null)
+      })
+    })
+    return png
+  } catch (error) {
+    return null
+  } finally {
+    try { if (临时) rmSync(临时, { recursive: true, force: true }) } catch (error) {}
+  }
 }
 
 /** 从 OneBot 的图片段里把字节抠出来：url → file(本地/base64://) 依次试 */
@@ -778,10 +892,13 @@ async function 取图字节(数据) {
 }
 
 /** 存一份到收图目录，返回路径（存不下就返回空串，不影响转图） */
-function 存一张(名字, 字节, 类) {
+function 存一张(名字, 字节, 类, 扩展名) {
   try {
     mkdirSync(收图目录, { recursive: true })
-    const p = join(收图目录, `${名字}.${扩展(类)}`)
+    // GIF 不存成 .gif：看图工具一读这个后缀就会把 GIF 塞进 Grok，整轮 400。
+    // 字节还是 GIF，发回 QQ 时按内容认，不看后缀。
+    const ext = 扩展名 || (类 === 'image/gif' ? 'gifdata' : 扩展(类))
+    const p = join(收图目录, `${名字}.${ext}`)
     writeFileSync(p, 字节)
     return p
   } catch (error) {
@@ -1541,6 +1658,20 @@ export function apply(ctx) {
     return 表
   }
 
+  /**
+   * 贴纸的规范化键：只认 `_stickers/` 和 `sticker-packs/` 里的图（以及 p1234 别号）。
+   * `收_` 前缀去掉 —— 兜底会把 `收_deyi.jpg` 翻成 `deyi.jpg`，两者必须算同一张。
+   */
+  function 贴纸键(值) {
+    let s = String(值 || '').trim()
+    if (/^[pP]\d{3,4}$/.test(s)) s = 按别号找(s) || s
+    const low = s.replace(/\\/g, '/').toLowerCase()
+    if (!/(^|\/)_stickers\/|(^|\/)sticker-packs\//.test(low)) return ''
+    const 段 = low.split('/')
+    const 文件 = String(段.pop() || '').replace(/^收_/, '')
+    return [...段, 文件].join('/')
+  }
+
   /** 把一句正文发到该发的地方（私聊 / 群）；按空行拆段，一段一条连发。⭐ 末尾再加上图片。 */
   async function 发到QQ(配置, 原文字, 图们, 方向 = '', 引用id = '') {
     // ⭐ 1.4.0：方向 = 会话键；**这间会话绑了几个聊天就发几个**（私聊 + 群都要发的情况）
@@ -1552,6 +1683,26 @@ export function apply(ctx) {
     const 出 = []
     // 正文里的 markdown 图（贴纸就是这么发的）也当图片发；抠掉之后正文更干净
     const 抠过 = 配置.发图 ? 抠正文图(原文字) : { 净文字: String(原文字 || ''), 图: [] }
+    // [本地补丁 2026-11-05] 同一张贴纸短时间别反复发。只拦 `_stickers/` / `sticker-packs/`，
+    //   用户发的照片、找谱的图不受影响；被拦下的那张会在下一轮菜单里点名。
+    const 贴纸会话 = 键 || '手动测试'
+    const 最近贴纸 = 近期贴纸.get(贴纸会话) || []
+    const 本轮贴纸 = []
+    if (抠过.图.length) {
+      抠过.图 = 抠过.图.filter((源) => {
+        const k = 贴纸键(源.value)
+        if (!k) return true
+        if (最近贴纸.includes(k)) {
+          记账('这张贴纸最近发过，这一轮没重复发：' + 源.value)
+          贴纸提醒.set(贴纸会话, '（上一轮你想发的 `' + 源.value + '` 最近发过了，我没重复发；'
+            + (k === String(源.value).replace(/\\/g, '/').toLowerCase() ? '' : '它其实就是 `' + k + '`，')
+            + '这一轮换一张没在最近列表里的。）')
+          return false
+        }
+        本轮贴纸.push(k)
+        return true
+      })
+    }
     // ⭐ 1.5.0：正文里的 `[名字](本地路径)` 当文件发。
     //   `![名](路径)` 是图片（上面刚抠走），`[名](路径)` 才是文件；http 链接不算。
     const 抠文件 = 配置.发文件 ? 抠正文文件(抠过.净文字) : { 净文字: 抠过.净文字, 文件: [] }
@@ -1729,6 +1880,13 @@ export function apply(ctx) {
       const 末 = 成的.length ? 成的[成的.length - 1] : null
       const 新id = 末 ? (末.数据.data.message_id != null ? 末.数据.data.message_id : 末.数据.data.messageId) : null
       if (新id != null) 最后发出.set(会话键(方向), { id: String(新id), 时: Date.now() })
+    } catch (error) {}
+    // [本地补丁 2026-11-05] 真发出去了才记进轮换表；发失败的不占名额。
+    try {
+      if (本轮贴纸.length && 出.some((x) => x && x.ok)) {
+        const 去过重 = [...new Set([...本轮贴纸, ...最近贴纸])]
+        近期贴纸.set(贴纸会话, 去过重.slice(0, 近期贴纸上限))
+      }
     } catch (error) {}
     return 出
   }
@@ -2798,13 +2956,43 @@ export function apply(ctx) {
         const buf = await 取图字节(段 && 段.data ? 段.data : 段)
         if (!buf || !buf.length) { 记账(`第 ${序} 张图下载失败，跳过`); continue }
         if (buf.length > 最大) { 记账(`第 ${序} 张图太大（${Math.round(buf.length / 1048576)}MB），跳过`); continue }
-        const 类 = 看图类(buf)
-        收下.push({ 类, b64: buf.toString('base64'), 存: 存一张(`${消息id || 'qq'}-${序}`, buf, 类), 字节: buf.length })
+        // [本地补丁 2026-11-05] 原图照存（发回去还是原图）。交给模型的必须是
+        //   JPG/PNG/WebP/ICO —— GIF 抽第一帧，认不出的字节不塞，避免整轮 400。
+        const 认 = 认模型图(buf)
+        let 模型字节 = null
+        let 模型类 = ''
+        let 静帧 = false
+        if (认.给模型) {
+          模型字节 = buf
+          模型类 = 认.类
+        } else if (认.类 === 'image/gif') {
+          const 静 = await 动图抽静帧(buf)
+          const 再认 = 静 ? 认模型图(静) : { 给模型: false }
+          if (再认.给模型) {
+            模型字节 = 静
+            模型类 = 再认.类
+            静帧 = true
+          } else {
+            记账(`第 ${序} 张是 GIF，抽不成静帧，不塞给模型`)
+          }
+        } else {
+          记账(`第 ${序} 张不是 JPG/PNG/WebP/ICO，不塞给模型`)
+        }
+        const 存类 = 认.类 || 'application/octet-stream'
+        const 存扩展 = 认.类 === 'image/gif' ? 'gifdata' : (认.给模型 ? 扩展(认.类) : 'bin')
+        收下.push({
+          类: 模型类 || 存类,
+          b64: 模型字节 ? 模型字节.toString('base64') : '',
+          不看: !模型字节,
+          静帧,
+          存: 存一张(`${消息id || 'qq'}-${序}`, buf, 存类, 存扩展),
+          字节: buf.length,
+        })
         // [本地补丁 2026-10-28] 表情库：**所有**收进来的图都先进候选区（免费，不判断）。
         //   收不收藏由它自己决定 —— 见 remember_sticker 工具。这里只管攒素材。
         //   ⚠ 收图开关关着的时候不攒（尊重设置），候选区也有上限，不会无限涨。
         let 候选id = ''
-        try { 候选id = 表情库.收候选(buf, 类, String((发送者 && 发送者.昵称) || ''))?.id || '' } catch (error) {}
+        try { 候选id = 表情库.收候选(buf, 认.类 || 'image/jpeg', String((发送者 && 发送者.昵称) || ''))?.id || '' } catch (error) {}
         收下[收下.length - 1].候选 = 候选id
       }
     }
@@ -2829,6 +3017,8 @@ export function apply(ctx) {
     const 说明 = 收下.length
       ? String.fromCharCode(10) + '（' + 谁 + '发了 ' + 收下.length + ' 张图：'
         + 收下.map((x, i) => `第${i + 1}张 ${Math.round(x.字节 / 1024)}KB`
+          + (x.静帧 ? '（动图，你只看得到第一帧）' : '')
+          + (x.不看 ? '（这张格式看不了，没有放进图里）' : '')
           + (x.存 ? `，要发回去就用 ${x.存}` : '')
           + (x.候选 ? `，想收进表情库就调 remember_sticker file="${x.候选}"` : '')).join('；')
         + (挂了几张 ? `；另有 ${挂了几张} 张没取到` : '')
@@ -2854,6 +3044,18 @@ export function apply(ctx) {
         //   实测 11-03 接好之后图库一张没被发过（会话里 `sticker-packs/` 出现 0 次），
         //   而 `_stickers/xxx.jpg` 有 380 多次 —— 她不敢抄长中文路径。别号只 5 个字符。
         const 图库 = 图库抽样(12)
+        // [本地补丁 2026-11-05] 把「最近发过的贴纸」直接摆在菜单里，重复的那张会被桥拦下。
+        //   上一轮被拦的原因只消费一次，免得每轮都在念叨同一句。
+        const 会话 = 会话键(这间)
+        const 近 = 近期贴纸.get(会话) || []
+        const 提 = 贴纸提醒.get(会话) || ''
+        if (提) 贴纸提醒.delete(会话)
+        const 轮换 = (近.length || 提)
+          ? String.fromCharCode(10) + '（' + [
+            ...(近.length ? ['最近发过的贴纸：' + 近.join('、') + ' —— 这一轮换一张，别再发这些'] : []),
+            ...(提 ? [提] : []),
+          ].join('；') + '）'
+          : ''
         return String.fromCharCode(10) + String.fromCharCode(10)
           + '（表情包菜单。自带的 24 张：' + 自带 + ' —— 写成 `_stickers/名字.jpg`。）'
           + (s
@@ -2871,6 +3073,7 @@ export function apply(ctx) {
           // [本地补丁 2026-10-31] 原生小黄脸：模型在入站看到的就是这个写法，顺着回发即可。
           + '想发 QQ 原生小黄脸（不是图片贴纸）就写 `[表情:名字]`，名字用：偷看 偷笑 呲牙 白眼 '
           + '得意 害羞 无语 鼓掌 强 抱拳 捂脸 —— 写错名字会原样变成文字。）'
+          + 轮换
       } catch (error) { return '' }
     })()
     // ⚠️ 2026-10-25（她报的）：群消息以前只有正文，**看不出是谁说的**。
@@ -2935,18 +3138,19 @@ export function apply(ctx) {
     let content = [{ type: 'text', text: 文案 }]
     if (收下.length) {
       const 附件 = ctx.attachments || ctx.get('attachments')
+      const 给模型 = 收下.filter((x) => !x.不看 && x.b64)
       if (附件 && typeof 附件.admitPromptContent === 'function') {
         try {
-          const 待 = content.concat(收下.map((x, i) => ({
+          const 待 = content.concat(给模型.map((x, i) => ({
             type: 'image', data: x.b64, mediaType: x.类, name: `qq-${消息id || 'x'}-${i + 1}.${扩展(x.类)}`,
           })))
           content = await 附件.admitPromptContent(待)
           // ⭐ 记下「附件 id / DSH 那份只读副本 → 我们存的原图」，回发时换回原图（GIF 不会变静态 webp）
           const 图块 = content.filter((x) => x && x.type === 'image' && x.attachment)
-          for (let i = 0; i < 图块.length && i < 收下.length; i++) {
+          for (let i = 0; i < 图块.length && i < 给模型.length; i++) {
             let 副本 = ''
             try { 副本 = typeof 附件.imageHostPath === 'function' ? String(附件.imageHostPath(图块[i].attachment) || '') : '' } catch (error) {}
-            记收图(图块[i].attachment && 图块[i].attachment.attachmentId, 副本, 收下[i].存)
+            记收图(图块[i].attachment && 图块[i].attachment.attachmentId, 副本, 给模型[i].存)
           }
         } catch (error) {
           记账('图交给 DSH 没成功（这轮只转文字）：' + String((error && error.message) || error))
@@ -3029,10 +3233,22 @@ export function apply(ctx) {
   // [本地补丁 2026-10-30] 「这间会话最后发出去的是哪条」—— qq_recall 撤回的就是它。
   //   ⚠ QQ 只让撤回两分钟内的，过点了接口会拒。
   const 最后发出 = new Map()   // 会话键 -> { id, 时 }
+  // [本地补丁 2026-11-05] 贴纸轮换。实测 `_stickers/收_deyi.jpg` 发了 120 次 ——
+  //   这张其实不存在，是「去掉收_前缀」的兼容兜底把它翻成了 deyi.jpg，于是每次都同一张。
+  //   现在按会话记最近发过的贴纸，重复的直接不发，并在下一轮菜单里点名提醒换一张。
+  const 近期贴纸 = new Map()   // 会话键 -> [规范化贴纸路径...]，最近在前
+  const 贴纸提醒 = new Map()   // 会话键 -> 下一轮要告诉它的一句话
+  const 近期贴纸上限 = 8
   // [本地补丁 2026-10-31] 出站语音的节流：
   //   · 上次发语音 = 整个 QQ 号共用一个冷却（跨群也算），别让她一高兴每条都发语音；
   //   · 语音发过 = 会话 -> 这一轮触发消息的时间戳，保证「一次回复最多一条语音」。
   let 上次发语音 = 0
+  // [本地补丁 2026-11-05] 现做表情的节流，跟语音分开计 —— 一张图没语音吵，但连发一样刷屏。
+  let 上次制表情 = 0
+  const 制表情发过 = new Map()
+  // [本地补丁 2026-11-05] AI 生图的节流。生图比模板表情贵得多，冷却也长得多。
+  let 上次生图 = 0
+  const 生图发过 = new Map()
   // [本地补丁 2026-11-03] 「自己主动念」单独再压一道：跟被点名的语音分开计时。
   let 上次主动语音 = 0
   const 语音发过 = new Map()
@@ -3294,6 +3510,7 @@ export function apply(ctx) {
         for (const [名, 造] of [['贴表情', 做贴表情工具], ['撤回', 做撤回工具],
           ['戳一戳', 做戳回去工具], ['点赞', 做点赞工具], ['改签名', 做签名工具],
           ['发语音', 做语音工具], ['唱歌', 做唱歌工具], ['学歌', 做学歌工具], ['找谱', 做找谱工具],
+          ['制表情', 做制表情工具], ['AI 生图', 做生图工具],
           ['记共同记忆', 做记共同工具], ['忘共同记忆', 做忘共同工具]]) {
           try {
             const off = agent.ctx.tools.register(造(sid))
@@ -3968,6 +4185,323 @@ export function apply(ctx) {
           ? '谱子图我已经放进**下一轮**消息里了 —— 下一轮你就能看到那张谱，照它写 notation 唱；'
           : '图存在本机（' + 图.join(' ') + '），可以写进回复里发给对方：`![' + 名 + '](' + 图[0] + ')`；')
         + '如果读不出/不像这首歌，就直说不会，别编。' }
+    },
+  })
+
+  // [本地补丁 2026-11-05] 现做一张表情。引擎是 MemeCrafters/meme-generator
+  //   （nonebot-plugin-memes 用的同一个），跟菜单里的静图不是一回事。
+  //   模型只给关键词和配文，不给路径：头像由这边按下发者的号去下，图只写在
+  //   qq-meme/out，再按「发语音」那套 file:// → 路径 → base64 发出去。
+  function 在这个目录里(文件, 目录) {
+    try {
+      const 实 = realpathSync(文件)
+      const 根 = realpathSync(目录)
+      if (实 === 根) return false
+      return 实.startsWith(根.endsWith(sep) ? 根 : 根 + sep)
+    } catch (error) {
+      return false
+    }
+  }
+
+  async function 下头像(号, 目录) {
+    const qq = String(号 || '').replace(/\D/g, '')
+    if (!/^\d{5,12}$/.test(qq)) return { ok: false }
+    let res
+    try {
+      res = await fetch('https://q1.qlogo.cn/g?b=qq&nk=' + qq + '&s=640', {
+        signal: AbortSignal.timeout(8000),
+        redirect: 'follow',
+      })
+    } catch (error) {
+      return { ok: false }
+    }
+    if (!res || !res.ok) return { ok: false }
+    const 声明 = Number(res.headers.get('content-length') || 0)
+    if (声明 > 2000000) return { ok: false }
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length < 32 || buf.length > 2000000) return { ok: false }
+    let 扩展名 = ''
+    if (buf[0] === 0x89 && buf[1] === 0x50) 扩展名 = '.png'
+    else if (buf[0] === 0xff && buf[1] === 0xd8) 扩展名 = '.jpg'
+    else if (buf.slice(0, 3).toString() === 'GIF') 扩展名 = '.gif'
+    else if (buf.slice(0, 4).toString() === 'RIFF') 扩展名 = '.webp'
+    else return { ok: false }
+    try { mkdirSync(目录, { recursive: true }) } catch (error) {}
+    const 文件 = join(目录, 'avatar-' + randomUUID().slice(0, 8) + 扩展名)
+    writeFileSync(文件, buf)
+    return { ok: true, 文件 }
+  }
+
+  async function 发表情图(配置, 行, 文件) {
+    const 是群 = 行.类型 === '群'
+    const 动作 = 是群 ? 'send_group_msg' : 'send_private_msg'
+    const 体 = (file) => (是群
+      ? { group_id: Number(行.号码), message: [{ type: 'image', data: { file } }] }
+      : { user_id: Number(行.号码), message: [{ type: 'image', data: { file } }] })
+    let 最后 = await 发一个(配置.NapCat, 动作, 体('file://' + 文件), 配置)
+    if (最后 && 最后.ok) return 最后
+    最后 = await 发一个(配置.NapCat, 动作, 体(文件), 配置)
+    if (最后 && 最后.ok) return 最后
+    try {
+      const b64 = readFileSync(文件).toString('base64')
+      最后 = await 发一个(配置.NapCat, 动作, 体('base64://' + b64), 配置)
+    } catch (error) {}
+    return 最后
+  }
+
+  function 制一张(配置, 查询, 配文, 头像) {
+    return new Promise((resolve) => {
+      const 家 = dirname(配置文件)
+      const 解释器 = String(配置.制表情解释器 || '').trim()
+        || (process.platform === 'win32'
+          ? join(家, 'qq-meme', '.venv', 'Scripts', 'python.exe')
+          : join(家, 'qq-meme', '.venv', 'bin', 'python'))
+      if (!existsSync(解释器)) return resolve({ ok: false, 说: '制表情的环境还没装（~/.dsh/qq-meme）。这次用菜单里的静图或者纯文字吧。' })
+      const 出目录 = join(家, 'qq-meme', 'out')
+      const 入目录 = join(家, 'qq-meme', 'in')
+      try { mkdirSync(出目录, { recursive: true }) } catch (error) {}
+      const 参数 = [join(PACKAGE_ROOT, 'tools', 'qq_meme.py'), 'make', '--query', 查询, '--out-dir', 出目录]
+      for (const 句 of 配文) 参数.push('--text', 句)
+      if (头像) 参数.push('--image', 头像, '--image-root', 入目录)
+      let 子 = null
+      try {
+        子 = spawn(解释器, ['-I', ...参数], {
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+        })
+      } catch (error) {
+        return resolve({ ok: false, 说: '制表情起不来。' })
+      }
+      let 出 = ''
+      let 错 = ''
+      let 收过 = false
+      const 收 = (v) => { if (收过) return; 收过 = true; resolve(v) }
+      const 定时 = setTimeout(() => {
+        try { 子.kill() } catch (error) {}
+        收({ ok: false, 说: '制表情超时了，这次先用文字吧。' })
+      }, 40000)
+      子.stdout.on('data', (c) => { if (出.length < 8000) 出 += c })
+      子.stderr.on('data', (c) => { if (错.length < 500) 错 += c })
+      子.on('error', (e) => { clearTimeout(定时); 收({ ok: false, 说: '制表情起不来。' }) })
+      子.on('close', () => {
+        clearTimeout(定时)
+        let 结果 = null
+        try { 结果 = JSON.parse(String(出).trim().split('\n').pop()) } catch (error) {}
+        if (结果 && typeof 结果.说 === 'string') return 收(结果)
+        收({ ok: false, 说: '制表情没有正常返回。' + (错.trim() ? '（' + 错.trim().slice(0, 80) + '）' : '') })
+      })
+    })
+  }
+
+  const 做制表情工具 = (sid) => ({
+    name: 'qq_meme',
+    description:
+      '现做一张表情发出去（摸头、拍、亲、爬、扔、贴、悲报、鲁迅说、举牌这类）。' +
+      '用的是 meme-generator，跟菜单里那些 `p编号` 静图不是一回事 —— 静图照旧写 p编号，' +
+      '要「上头像 / 配一句字」的才调这个。' +
+      'keyword 填中文或英文 key，比如 摸、拍、亲、悲报、鲁迅说。' +
+      '对上好几张（比如只说「举牌」）时，工具会回几个更具体的名字，挑一个再调，别猜。' +
+      '需要配文的，写在 text 里；要两句就用 | 隔开。不填 who 就用刚说话那个人的头像。' +
+      '一轮最多一张，别连着做。',
+    parameters: {
+      type: 'object',
+      properties: {
+        keyword: { type: 'string', description: '做什么图：摸 / 拍 / 亲 / 悲报 / 鲁迅说，或工具回你的那个 key' },
+        text: { type: 'string', description: '配文。不要配文就留空；要两句用 | 隔开，一句最多 60 字' },
+        who: { type: 'string', description: '用谁的头像（QQ 号）。不填 = 刚把这一轮叫起来的那个人' },
+      },
+      required: ['keyword'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.允许制表情 !== true) return { ok: true, 说: '制表情这道闸关着，这次没做。' }
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着，表情发不出去。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      if (静默轮.has(sid)) return { ok: true, 说: '这一轮已经决定不回了，不做表情。' }
+      const 查询 = String((args && args.keyword) || '').trim().slice(0, 40)
+      if (!查询) return { ok: true, 说: '没说要做什么图。' }
+      const 这轮 = String(锚.触.时 || '')
+      if (制表情发过.get(sid) === 这轮) return { ok: true, 说: '这一轮已经做过一张了，一张就够。' }
+      const 冷却 = Math.max(0, Number(配置.制表情冷却秒) || 0) * 1000
+      const 剩 = 冷却 - (Date.now() - 上次制表情)
+      if (上次制表情 && 剩 > 0) {
+        return { ok: true, 说: '刚做过一张，还得等 ' + Math.ceil(剩 / 1000) + ' 秒。' }
+      }
+      const 配文 = String((args && args.text) || '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 4)
+        .map((s) => s.slice(0, 60))
+      const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === sid && b.类型 === (锚.触.类型 === '群' ? '群' : '私聊'))
+        || (配置.绑定 || []).find((b) => 会话键(b.会话) === sid) || null
+      if (!行) return { ok: true, 说: '这间会话没绑聊天，表情发不出去。' }
+      const 入目录 = join(dirname(配置文件), 'qq-meme', 'in')
+      let 头像 = ''
+      const 谁 = 认号码(args, 锚.触)
+      if (谁) {
+        const 下 = await 下头像(谁, 入目录)
+        if (下.ok) 头像 = 下.文件
+      }
+      const 做 = await 制一张(配置, 查询, 配文, 头像)
+      if (!做 || !做.ok) return { ok: true, 说: (做 && 做.说) || '这张没做成。' }
+      const 出目录 = join(dirname(配置文件), 'qq-meme', 'out')
+      // anim 是动图原文（后缀不是 .gif，避免被看图工具读进 Grok）。有它就发它，QQ 上还是动的。
+      const 能动 = 做.anim && 在这个目录里(做.anim, 出目录) ? 做.anim : ''
+      const 能静 = 做.file && 在这个目录里(做.file, 出目录) ? 做.file : ''
+      if (!能动 && !能静) {
+        记账('制表情：输出不在允许的目录里，丢掉了')
+        return { ok: true, 说: '这张没做成。' }
+      }
+      const 发出 = 能动 || 能静
+      const 清表情文件 = () => {
+        try { if (能静) unlinkSync(能静) } catch (error) {}
+        try { if (能动) unlinkSync(能动) } catch (error) {}
+      }
+      if (配置.试运行 === true) {
+        清表情文件()
+        return { ok: true, 说: '试运行开着，没有真发。' + (做.说 || '') }
+      }
+      try {
+        const r = await 发表情图(配置, 行, 发出)
+        if (r && r.ok) {
+          上次制表情 = Date.now()
+          制表情发过.set(sid, 这轮)
+          const 新id = r.数据 && r.数据.data
+            ? (r.数据.data.message_id != null ? r.数据.data.message_id : r.数据.data.messageId)
+            : null
+          if (新id != null) 最后发出.set(sid, { id: String(新id), 时: Date.now() })
+          记账('制了张表情（' + String(做.key || 查询) + '）')
+          清表情文件()
+          try { if (头像) unlinkSync(头像) } catch (error) {}
+          return { ok: true, 说: '表情发出来了。' + (做.说 || '') }
+        }
+        记账('制表情没发出去：' + JSON.stringify(r && r.数据).slice(0, 160))
+        return { ok: true, 说: '图做好了，但 QQ 没收下。' }
+      } catch (error) {
+        记账('制表情出错：' + String((error && error.message) || error))
+        return { ok: true, 说: '表情没发出去。' }
+      }
+    },
+  })
+
+  // [本地补丁 2026-11-05] 「AI 生图」工具。跟 qq_meme 分开：那边是固定底图的模板，
+  //   这里是从一句话画一张新图。模型只给 prompt（和可选尺寸），图由桥写到
+  //   ~/.dsh/qq-draw/out 再按「制表情」同一套发出去。
+  //   ⚠ 走本机 magpie 的 OpenAI 兼容接口（默认 grok/grok-imagine-image），不直连外网 ——
+  //   密钥和路由都在 magpie 手里。生图按钮不便宜，所以一轮一张 + 两分钟冷却。
+  const 做生图工具 = (sid) => ({
+    name: 'qq_draw',
+    description:
+      '**画一张新的图**（AI 生图，不是模板表情）。有人让你画 / 生成 / 来一张图时用它；' +
+      '「摸头 / 悲报 / 举牌」这种现成模板用 qq_meme，不要混。' +
+      'prompt 写具体：主体、动作、风格、构图、颜色、要出现的字。' +
+      '一轮最多一张，冷却两分钟；群里只有被点名要求画时才画。',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: '画什么，越具体越好，最多 500 字' },
+        size: { type: 'string', description: '可选尺寸：1024x1024 / 1536x1024 / 1024x1536，或 16:9 这种比例；不填用模型默认' },
+      },
+      required: ['prompt'],
+      additionalProperties: false,
+    },
+    output: 输出通用,
+    async execute(args) {
+      const 配置 = 读配置()
+      if (配置.允许生图 !== true) return { ok: true, 说: '生图这道闸关着，这次没画。' }
+      if (配置.总开关 !== true) return { ok: true, 说: '桥的总开关关着，图画了也发不出去。' }
+      const 锚 = 这轮锚点(sid)
+      if (!锚.触) return { ok: true, 说: 锚.说 }
+      if (静默轮.has(sid)) return { ok: true, 说: '这一轮已经决定不回了，不画。' }
+      const 提示 = String((args && args.prompt) || '').trim().slice(0, 500)
+      if (!提示) return { ok: true, 说: '没说要画什么。' }
+      const 这轮 = String(锚.触.时 || '')
+      if (生图发过.get(sid) === 这轮) return { ok: true, 说: '这一轮已经画过一张了，一张就够。' }
+      const 冷却 = Math.max(0, Number(配置.生图冷却秒) || 0) * 1000
+      const 剩 = 冷却 - (Date.now() - 上次生图)
+      if (上次生图 && 剩 > 0) {
+        return { ok: true, 说: '刚画过一张，还得等 ' + Math.ceil(剩 / 1000) + ' 秒。' }
+      }
+      // 试运行不调模型 —— 生图比模板表情贵，没打算真发就别花这笔
+      if (配置.试运行 === true) return { ok: true, 说: '试运行开着，没有真画。' }
+      const 行 = (配置.绑定 || []).find((b) => 会话键(b.会话) === sid && b.类型 === (锚.触.类型 === '群' ? '群' : '私聊'))
+        || (配置.绑定 || []).find((b) => 会话键(b.会话) === sid) || null
+      if (!行) return { ok: true, 说: '这间会话没绑聊天，图画了也发不出去。' }
+
+      const 体 = { model: String(配置.生图模型 || ''), prompt: 提示, n: 1 }
+      const 尺寸 = String((args && args.size) || '').trim().slice(0, 20)
+      if (尺寸) 体.size = 尺寸
+      let 响应 = null
+      try {
+        响应 = await fetch(配置.生图地址, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(体),
+          signal: AbortSignal.timeout(Math.max(10, Number(配置.生图超时秒) || 180) * 1000),
+        })
+      } catch (error) {
+        记账('生图请求失败：' + String((error && error.message) || error))
+        return { ok: true, 说: '生图引擎没接上（magpie 可能没在跑）。这次先用文字吧。' }
+      }
+      if (!响应 || !响应.ok) {
+        let 错 = ''
+        try { 错 = String(await 响应.text()).slice(0, 120) } catch (error) {}
+        记账('生图 HTTP ' + (响应 && 响应.status) + '：' + 错)
+        return { ok: true, 说: '生图没成功（HTTP ' + (响应 && 响应.status) + '）。这次先用文字吧。' }
+      }
+      let 数据 = null
+      try { 数据 = await 响应.json() } catch (error) {}
+      const 字节 = await 生图取字节(数据, 配置.生图地址)
+      if (!字节 || !字节.length) {
+        记账('生图返回里没有图')
+        return { ok: true, 说: '生图返回里没有图。' }
+      }
+      const 最大 = Math.max(1, Math.min(Number(配置.图上限MB) || 5, 30)) * 1024 * 1024
+      if (字节.length > 最大) {
+        记账('生图太大（' + Math.round(字节.length / 1048576) + 'MB），没发')
+        return { ok: true, 说: '这张图太大了，没发出去。' }
+      }
+      const 认 = 认模型图(字节)
+      if (!认.给模型) {
+        记账('生图返回的不是 JPG/PNG/WebP/ICO（' + (认.类 || '认不出') + '），没发')
+        return { ok: true, 说: '生图返回的格式不对，没发。' }
+      }
+      const 出目录 = join(dirname(配置文件), 'qq-draw', 'out')
+      try { mkdirSync(出目录, { recursive: true }) } catch (error) {}
+      const 文件 = join(出目录, 'draw-' + Date.now() + '-' + randomUUID().slice(0, 6) + '.' + 扩展(认.类))
+      try { writeFileSync(文件, 字节) } catch (error) {
+        记账('生图存盘失败：' + String((error && error.message) || error))
+        return { ok: true, 说: '这张没存下来。' }
+      }
+      // 写完之后再核 realpath（写在前面才能核出来）；文件名是我们自己起的，没有外部输入
+      if (!在这个目录里(文件, 出目录)) {
+        try { unlinkSync(文件) } catch (error) {}
+        记账('生图：输出不在允许的目录里，丢掉了')
+        return { ok: true, 说: '这张没存下来。' }
+      }
+      try {
+        const r = await 发表情图(配置, 行, 文件)
+        if (r && r.ok) {
+          上次生图 = Date.now()
+          生图发过.set(sid, 这轮)
+          const 新id = r.数据 && r.数据.data
+            ? (r.数据.data.message_id != null ? r.数据.data.message_id : r.数据.data.messageId)
+            : null
+          if (新id != null) 最后发出.set(sid, { id: String(新id), 时: Date.now() })
+          记账('生图画好了（' + String(配置.生图模型) + '）：' + 提示.slice(0, 40))
+          try { unlinkSync(文件) } catch (error) {}
+          return { ok: true, 说: '画好发出来了。' }
+        }
+        记账('生图没发出去：' + JSON.stringify(r && r.数据).slice(0, 160))
+        return { ok: true, 说: '图画好了，但 QQ 没收下。' }
+      } catch (error) {
+        记账('生图发送出错：' + String((error && error.message) || error))
+        return { ok: true, 说: '图画好了，但没发出去。' }
+      }
     },
   })
 

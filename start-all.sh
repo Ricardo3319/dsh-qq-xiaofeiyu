@@ -230,6 +230,14 @@ cmd_check() {
         bad "没有图库索引 —— 跑：python3 tools/sticker_packs_index.py"; fail=1
     fi
     echo
+    echo "现做表情（meme-generator）："
+    local meme_py="$HOME/.dsh/qq-meme/.venv/bin/python"
+    if [ -x "$meme_py" ] && "$meme_py" -I -c 'import meme_generator' >/dev/null 2>&1; then
+        ok "meme-generator 环境在（qq_meme 用这个，不是另一个机器人）"
+    else
+        bad "没有 ~/.dsh/qq-meme —— 装法在 README「现做表情」。静图菜单不受影响"; fail=1
+    fi
+    echo
     [ "$fail" = 0 ] && ok "自检通过" || bad "上面有没对上的，按提示处理"
     return "$fail"
 }

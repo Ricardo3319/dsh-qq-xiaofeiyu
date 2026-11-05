@@ -27,13 +27,15 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | `vendor/dsh-qq-bridge/` | 桥的本地副本。**这个目录就是正在跑的代码**（profile 用 `link:` 指过来）。上游 1.5.0 + 我们的补丁，改动处都带 `[本地补丁 日期]` 注释。⚠ 本地包名仍叫 `dsh-qq-bridge`（上游已改名 `dsh-qq-link`）—— 见文末许可一节 |
 | `tools/qq-events.py` | 戳一戳适配器：把 OneBot 的 `notice` 事件转成一句话，按聊天精确路由给桥 |
 | `tools/sticker_packs_index.py` | 把 dsh-meme 图库市场装下来的表情包编成索引（`~/.dsh/qq-sticker-packs.json`），桥每轮随机抽 12 张塞进表情菜单。菜单里给的是**别号**（`p0644`），桥按别号翻回整条路径 —— 长中文路径她不敢抄，实测一个月里图库 0 次、自带 380 次 |
+| `vendor/dsh-qq-bridge/tools/qq_meme.py` | 现做表情的胶水。引擎装在 `~/.dsh/qq-meme`（不进仓库），见下面「现做表情」 |
 | `tools/ctx_report.py` | 把 QQ 四间会话的**上下文曲线**画成一页 HTML（`~/.dsh/ctx-report.html`）：每次请求多大、由什么组成、压缩把水位压到哪儿。数据来自 magpie 路由日志，`--days N` 可调范围 |
 | `deploy/qq-events.service.template` | 它的 systemd 用户单元模板（真实号码部署时填，不进仓库） |
 | `deploy/preset-xiaofeiyu.yml.template` | **人设的仓库副本** —— 真正生效那份在 `~/.dsh/profiles/web/cordis.patch.yml` 里，profile 重建 / 换机器时照这份还原 |
 | `deploy/preset-chonglang.yml.template` | **另一套人设的仓库副本**（冲浪小肥鱼 / DeepSeek 娘，用在 887 / 811 那两个群）。⚠ 里面的老爹 QQ 号是 `<老爹QQ>` 占位符，还原前必须换成真实号码 —— 仓库是公开的 |
+| `deploy/patches/` | **npm 装的那些插件的本地补丁**（改的是 `~/.dsh/profiles/web/node_modules/`，升级会被覆盖）。现在有 `dsh-feiyu-mood-小波动不挪基调.patch`：升级该插件后按文件名 `patch -p0 -d <node_modules 的上一层>` 重打 |
 | `tools/persona_templates.py` | **人设副本对账**：`--check` 比对仓库副本和本机 profile，`--write` 用本机现状重写（号码自动打码）。按内容找块，不按行号 |
 | `start-all.sh` | **一键启停整套**：`start` / `stop` / `status` / `url` / `check` / `autostart on\|off`。`check` 是自检：人设副本 ↔ 本机、图库软链、图库索引。只驱动 systemd 用户单元，不自己起进程 —— 启动细节和号码都留在单元里 |
-| `_stickers/` | 贴纸包（24 张自带 + manifest） |
+| `_stickers/` | 贴纸包（24 张自带 + manifest）。桥按会话记最近发过的 8 张，同一张短时间内重复会被拦下，下一轮菜单会点名让它换一张 |
 | `docs/update-from-upstream.md` | **怎么跟上上游**：三方合并的步骤、解冲突的规矩、踩过的两个坑 |
 | `docs/voice.md` | **语音两个方向**：语音条转文字（SenseVoice）、文字转语音条（edge-tts + `qq_voice`）、唱歌（DiffSinger + `qq_sing`）、学歌（哼唱量音高 + `qq_learn_song`）、找谱（联网找谱 + `qq_find_score`）、依赖与坑 |
 | `docs/qq-sing-melodies.example.json` | 唱歌自定义曲目的示例：简谱字符串或音名列表，放到 `~/.dsh/qq-sing/melodies.json` |
@@ -62,7 +64,9 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 |---|---|
 | **引用回复**（`reply` 段） | 群里人多时不引用就对不上号。只在这批只有一条消息时引，长回复拆段只挂在第一条 |
 | **贴表情**（`qq_react` → `set_msg_emoji_like`） | 不想发言、但也不该像没看见 —— 贴个表情最省 |
-| **发表情包** | 自带 24 张（人设里写死名字）+ 她自己收的（`_stickers/收_*`）+ **图库**：dsh-meme 市场装的包放在 `~/.dsh/meme-packs`，仓库根下 `sticker-packs` 是指过去的软链，桥每轮随机抽 8 张塞进「表情包菜单」 |
+| **发表情包** | 自带 24 张（人设里写死名字）+ 她自己收的（`_stickers/收_*`）+ **图库**：dsh-meme 市场装的包放在 `~/.dsh/meme-packs`，仓库根下 `sticker-packs` 是指过去的软链，桥每轮随机抽 12 张塞进「表情包菜单」（菜单给别号 `p0644`，不用抄路径） |
+| **现做表情**（`qq_meme`） | 上头像、配一句字的那种（摸 / 拍 / 悲报 / 举牌）。引擎是 [meme-generator](https://github.com/MemeCrafters/meme-generator) 0.2.x，和 [nonebot-plugin-memes](https://github.com/MemeCrafters/nonebot-plugin-memes) 同一个，不另起一个机器人。模型只给关键词，头像按这一轮的发送者下，图只写在 `~/.dsh/qq-meme/out`。装法见下面「现做表情」 |
+| **AI 生图**（`qq_draw`） | 一句话画一张新图。走本机 magpie 的 OpenAI 兼容生图接口，默认 `grok/grok-imagine-image`；模板表情仍走 `qq_meme`。一轮一张、两分钟冷却 |
 | **撤回**（`qq_recall` → `delete_msg`） | 撤自己刚发的那条，自己卡两分钟时限 |
 | **戳回去**（`qq_poke`） | 被戳了能戳回去（走 PacketApi，部分 QQ 版本不支持） |
 | **点赞**（`qq_like`） | 名片赞 |
@@ -136,6 +140,47 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 ⚠ **`dsh web` 每次启动都重新随机生成 token**，浏览器里 30 天的 cookie 绑的是当次那个。
 所以重启之后直接开 `127.0.0.1:3080` 只会看到 `dsh web authentication required`，旧书签也一样 ——
 用 `./start-all.sh url` 取当前那条带 token 的地址。
+
+### 现做表情
+
+静图菜单做不到「用对方头像摸一下 / 配一句字」。这一块不自己画，接
+[meme-generator](https://github.com/MemeCrafters/meme-generator)（0.2.x，Rust 绑定，和
+NoneBot 的 [nonebot-plugin-memes](https://github.com/MemeCrafters/nonebot-plugin-memes)
+同一个引擎）。**不要**再装一个 NoneBot 去轮询 NapCat —— 两个桥会把同一条消息投两遍。
+
+```bash
+uv venv ~/.dsh/qq-meme/.venv --python 3.12
+uv pip install --python ~/.dsh/qq-meme/.venv/bin/python 'meme-generator==0.2.3'
+~/.dsh/qq-meme/.venv/bin/python -I -c 'import meme_generator.resources as r; r.check_resources()'
+```
+
+`check_resources()` 会下一份字体和底图（要能上网，只此一次）。桥上的工具是 `qq_meme`：
+关键词用中文（摸、拍、悲报、鲁迅说），配文放 `text`，两句用 `|` 隔开。头像只取这一轮
+发送者的公开头像，模型给不了文件路径。一轮一张，默认 15 秒冷却。环境没装好时工具直接
+说没装好，聊天不受影响。
+
+摸头这类引擎会出 **GIF**。Grok 看图只收 JPG / PNG / WebP / ICO，GIF 塞进请求会整轮
+400，而且这张图留在历史里，后面每一轮（包括压缩）都跟着失败。所以：发给 QQ 的仍是
+动图字节，但文件名不用 `.gif`；给模型看的是第一帧 PNG。不要用看图去打开 `.gif`。
+
+`./start-all.sh check` 会看这个环境在不在。
+
+### AI 生图
+
+跟模板表情分开：`qq_draw` 是从一句话画一张新图，走本机 magpie 的 OpenAI 兼容接口：
+
+```bash
+curl -sX POST http://127.0.0.1:3425/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"grok/grok-imagine-image","prompt":"一只橘猫戴着草帽坐在窗台上，水彩风格","n":1}'
+```
+
+返回 `data[0].b64_json`（JPEG）。桥只收 JPG/PNG/WebP/ICO，存到 `~/.dsh/qq-draw/out`，
+发完就删。配置：`允许生图`（默认开）、`生图地址`、`生图模型`、`生图冷却秒`（默认 120）、
+`生图超时秒`（默认 180）。
+
+⚠ magpie 的 MCP `generate_image` 选 Grok 时会 `ECONNRESET`，直连 `/v1/images/generations`
+反而正常 —— 桥用的是后者。试运行开着时不调模型，免得白花额度。
 
 ### 已知的限制
 

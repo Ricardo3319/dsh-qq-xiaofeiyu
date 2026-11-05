@@ -7,7 +7,7 @@
 //   5) /state 路由能回出配置和 NapCat 探活结果
 // 跑法： node tests/宿主半边.mjs
 
-import { mkdtempSync, writeFileSync as 原写文件, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync as 原写文件, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -238,6 +238,35 @@ await new Promise((r) => setTimeout(r, 20))
 if (发了[0]) {
   const 体 = 发了[0].体
  报('私聊体：user_id=123 + 一条 text 段', 体.user_id === 123 && 体.message && 体.message[0].type === 'text' && 体.message[0].data.text === '宝宝，我想你了', JSON.stringify(体))
+}
+
+// [本地补丁 2026-11-05] 同一张贴纸连发两轮：第一轮带图，第二轮不再重复。
+//   生产上 `_stickers/收_deyi.jpg` 其实不存在，靠「去掉收_前缀」兜底成 deyi.jpg —— 这里照原样复现。
+{
+  const 贴纸根 = join(家, '贴纸根')
+  mkdirSync(join(贴纸根, '_stickers'), { recursive: true })
+  writeFileSync(join(贴纸根, '_stickers', 'deyi.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+  const 旧配置 = JSON.parse(readFileSync(join(家, 'qq-bridge-config.json'), 'utf8'))
+  writeFileSync(join(家, 'qq-bridge-config.json'), JSON.stringify({ ...旧配置, 图片根目录: 贴纸根, 拆段间隔毫秒: 0 }))
+  const 图数 = () => 发了.filter((x) => Array.isArray(x.体 && x.体.message)
+    && x.体.message[0] && x.体.message[0].type === 'image').length
+  const 前图 = 图数()
+  const 前总 = 发了.length
+  // 用 130/131，避开别的用例已经用过的轮号（已发轮按 会话:轮号 去重）
+  监听[0](会话, 助手消息(130, 1, [块('text', '得意一下\n![x](_stickers/收_deyi.jpg)')], false))
+  监听[0](会话, 转完(130))
+  await new Promise((r) => setTimeout(r, 40))
+  const 第一轮图 = 图数() - 前图
+  const 第一轮总 = 发了.length - 前总
+  监听[0](会话, 助手消息(131, 1, [块('text', '再得意一下\n![x](_stickers/收_deyi.jpg)')], false))
+  监听[0](会话, 转完(131))
+  await new Promise((r) => setTimeout(r, 40))
+  const 第二轮图 = 图数() - 前图 - 第一轮图
+  const 第二轮总 = 发了.length - 前总 - 第一轮总
+  报('贴纸轮换：第一轮带图，第二轮不重复同一张', 第一轮图 === 1 && 第二轮图 === 0,
+    `图 ${第一轮图}/${第二轮图}，请求 ${第一轮总}/${第二轮总}`)
+  报('贴纸轮换：被拦的是图，第二轮文字照发', 第二轮总 >= 1, String(第二轮总))
+  writeFileSync(join(家, 'qq-bridge-config.json'), JSON.stringify(旧配置))
 }
 
 // ② 中间步骤：先 pm 再看表那种多步，只发**最后一步**（同 turn 后面那条）。
