@@ -1,15 +1,15 @@
 --- a/node_modules/dsh-feiyu-mood/lib/index.js
 +++ b/node_modules/dsh-feiyu-mood/lib/index.js
-@@ -1336,7 +1336,11 @@
- function applyDelta(s, delta, floor, minor) {
-   // ⭐ 大心情值（mood）是“基调”，要慢：每轮只吃判定值的三分之一，几轮对话才累积挪一格
-   //    （七根情绪才该即时地每轮动）。timeline 里 delta 记的是实际 mood 变化，跟显示对得上。
--  const moodStep = Math.round(delta.moodDelta / MOOD_STEP_DIVISOR)
-+  // [本地补丁 2026-11-05] 小波动不挪基调。
-+  //   以前每轮都按 moodDelta/3 挪一点，聊天一密，+1 的「小波动」也会一路把心情顶到 97；
-+  //   12 小时半衰期根本追不上。现在只有「显著」的判定（sigMood / sigDim 够数）才动 mood，
-+  //   小波动仍然进时间线和七根情绪，只是不再改总基调。
-+  const moodStep = minor ? 0 : Math.round(delta.moodDelta / MOOD_STEP_DIVISOR)
+@@ -1452,7 +1452,11 @@
+   const 在顶 = s.mood >= 85 && delta.moodDelta > 0
+   const 在底 = s.mood <= 40 && delta.moodDelta < 0
+   const 因子 = (在顶 || 在底) ? 0.5 : 1
+-  const moodStep = Math.round((delta.moodDelta * 因子) / MOOD_STEP_DIVISOR)
++  // [本地补丁 2026-11-06] 小波动不挪基调。
++  //   0.9.1 已经有「≥85 正减半」的饱和，但聊天密的时候每轮 +1 的小波动仍会把心情推到 85。
++  //   只有显著判定（sigMood / sigDim 够数）才动 mood；小波动仍进时间线和七根情绪，
++  //   也仍会被 0.8.8 的 sinceInject 累计（攒够门槛照样告诉她）。
++  const moodStep = minor ? 0 : Math.round((delta.moodDelta * 因子) / MOOD_STEP_DIVISOR)
    s.mood = clamp(s.mood + moodStep, floor, 100)
    for (const [k] of DIMS) s.dims[k] = clamp(s.dims[k] + delta.dims[k], 0, 100)
    s.lastReason = delta.reason
