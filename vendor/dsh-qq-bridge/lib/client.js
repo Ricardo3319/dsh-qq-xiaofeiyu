@@ -199,6 +199,8 @@ window.__ModuleLoader__.load({
       }
       const 设绑定 = (下一份) => 改('绑定', 下一份)
       const 改绑定 = (i, 补) => 设绑定(绑定们().map((x, j) => (j === i ? { ...x, ...补 } : x)))
+      const 改互动 = (i, k, v) => 改绑定(i, { 互动: { ...绑定们()[i].互动, [k]: v } })
+      const 改偏好 = (i, k, v) => 改绑定(i, { 偏好: { ...绑定们()[i].偏好, [k]: v } })
       const 加绑定 = () => 设绑定([...绑定们(), { 类型: '群', 号码: '', 会话: '', 称呼: '', 门槛: false }])
       const 删绑定 = (i) => 设绑定(绑定们().filter((_, j) => j !== i))
 
@@ -389,6 +391,30 @@ window.__ModuleLoader__.load({
                       勾(x.只听点名 == null ? !配置.群里听所有人 : Boolean(x.只听点名), (v) => 改绑定(i, { 只听点名: v })),
                       h('span', { style: S.dim }, '只听 @ 我的'))
                   : null),
+              h('details', { style: { margin: '0 0 10px', padding: '6px 8px', background: 'rgba(127,127,127,.06)' } },
+                h('summary', { style: { cursor: 'pointer' } }, '聊天偏好'),
+                x.类型 === '私聊' ? 行('怎么称呼你', h('input', { style: S.inp, maxLength: 24, value: x.偏好?.nickname || '',
+                  onChange: e => 改偏好(i, 'nickname', e.target.value) }), '留空使用原称呼，不必每句话都重复。') : null,
+                行('回复长短', h('select', { style: S.inp, value: x.偏好?.reply_length || 'default', onChange: e => 改偏好(i, 'reply_length', e.target.value) },
+                  h('option', { value: 'default' }, '保持原风格'), h('option', { value: 'short' }, '简短，先说要点'), h('option', { value: 'detailed' }, '详细，解释清楚')), '由模型遵循；当次明确要求展开或简短时以当次要求为准。'),
+                行('语音与唱歌', h('select', { style: S.inp, value: x.偏好?.voice || 'default', onChange: e => 改偏好(i, 'voice', e.target.value) },
+                  h('option', { value: 'default' }, '遵循原有开关'), h('option', { value: 'off' }, '这个聊天不发语音、不唱歌')), '关闭会在发送端生效；不会关闭语音识别。'),
+                按钮('恢复默认偏好', () => 改绑定(i, { 偏好: { nickname: '', reply_length: 'default', voice: 'default' } }), false, false),
+                h('div', { style: S.dim }, '保存后生效。群设置作用于全群；多个聊天共用一间会话时，不混用称呼/长短提示，语音限制仍按聊天生效。')),
+              h('details', { style: { margin: '0 0 10px', padding: '6px 8px', background: 'rgba(127,127,127,.06)' } },
+                h('summary', { style: { cursor: 'pointer' } }, '免打扰与主动互动'),
+                h('div', { style: S.dim }, '只限制主动推送和未点名的群聊插话；私聊来信、@、引用和叫名字仍按原流程回应。略过的闲聊不会稍后补发。'),
+                ...[['quiet_start', '免打扰开始'], ['quiet_end', '免打扰结束']].map(([k, label]) =>
+                  行(label, h('input', { type: 'time', style: S.inp, value: x.互动?.[k] ?? '00:00',
+                    onChange: (e) => 改互动(i, k, e.target.value) }), '支持跨午夜；开始与结束相同表示不设免打扰。')),
+                行('时区', h('input', { style: S.inp, value: x.互动?.timezone ?? 'Asia/Shanghai',
+                  onChange: (e) => 改互动(i, 'timezone', e.target.value) }), 'Asia/Shanghai 为北京时间；Asia/Tokyo 为日本时间。'),
+                ...[['min_interval_minutes', '平时最小间隔（分钟）'], ['weekday_interval_minutes', '工作日最小间隔（分钟）']].map(([k, label]) =>
+                  行(label, h('input', { type: 'number', min: 0, max: 1440, step: 1, style: S.small, value: x.互动?.[k] ?? 0,
+                    onChange: (e) => 改互动(i, k, Number(e.target.value)) }), '工作日为所选时区的周一至周五，取两项较大值；0 不增加限制。')),
+                按钮('取消本聊天额外限制', () => 改绑定(i, { 互动: { quiet_start: '00:00', quiet_end: '00:00',
+                  timezone: x.互动?.timezone || 'Asia/Shanghai', min_interval_minutes: 0, weekday_interval_minutes: 0 } }), false, false),
+                h('div', { style: S.dim }, '保存设置后生效。主动搭话插件自身的安静时段和间隔仍然有效。')),
               i === 人设行
                 ? h('div', { style: { margin: '0 0 8px', padding: '6px 8px', background: 'rgba(127,127,127,.06)', borderRadius: 4 } },
                     h('div', { style: { ...S.dim, marginBottom: 4 } }, '这一行单独用的人设（留空 = 用上面那份）'),
@@ -442,6 +468,14 @@ window.__ModuleLoader__.load({
 
       // ───────────── 消息 ─────────────
       const 消息页 = h('div', null,
+        // [本地补丁 2026-11-06] 开源搜索与网页阅读。
+        h('div', { style: S.card },
+          h('div', { style: { ...S.h, margin: '0 0 8px' } }, '联网搜索与链接阅读'),
+          行('允许联网', 勾(配置.允许联网, (v) => 改('允许联网', v)), '需要查资料时由它调用；总开关关闭或试运行时不会联网。'),
+          行('搜索服务地址', h('input', { style: S.wide, value: String(配置.搜索地址 || ''), placeholder: 'http://127.0.0.1:8888', onChange: (e) => 改('搜索地址', e.target.value) }), 'SearXNG 实例地址，需启用 JSON 搜索格式。'),
+          行('网页阅读服务地址', h('input', { style: S.wide, value: String(配置.阅读地址 || ''), placeholder: 'https://r.jina.ai', onChange: (e) => 改('阅读地址', e.target.value) }), '默认使用 Jina Reader 公共服务，会向它发送要阅读的网址。也可填自托管 Reader 地址。'),
+          行('正文最多字数', h('input', { type: 'number', min: 500, max: 20000, style: S.small, value: String(配置.网页最多字 ?? 6000), onChange: (e) => 改('网页最多字', Number(e.target.value)) }), '长网页截断并标明，避免一页资料占满聊天上下文。'),
+        ),
         h('div', { style: S.card },
           h('div', { style: { ...S.h, margin: '0 0 8px' } }, '连到哪个 QQ 后端'),
           行('接口地址', h('input', { style: S.wide, value: String(配置.NapCat || ''), onChange: (e) => 改('NapCat', e.target.value) }), 'NapCat / SnowLuma 的 HTTP 地址，一般是 http://127.0.0.1:3000。'),

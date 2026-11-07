@@ -1,0 +1,14 @@
+[Unit]
+Description=QQ DS SearXNG local search
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=<REPO>/.runtime/searxng
+Environment=SEARXNG_SETTINGS_PATH=<REPO>/deploy/searxng-settings.yml
+ExecStart=<REPO>/.runtime/qq-search/bin/granian --interface wsgi --host 127.0.0.1 --port 8888 --blocking-threads 4 searx.webapp:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

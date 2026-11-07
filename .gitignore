@@ -20,3 +20,7 @@ __pycache__/
 *.tmp
 .DS_Store
 sticker-packs
+# 本地搜索服务源码与 uv 环境（来源和部署配置见 docs/opensource-integrations.html）
+/.runtime/
+# 含本机搜索服务密钥；仓库只保存 .template 模板
+/deploy/searxng-settings.yml

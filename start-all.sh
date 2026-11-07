@@ -12,7 +12,7 @@
 #   ./start-all.sh autostart on        恢复开机自启（下次登录生效）
 #
 # 为什么脚本不自己起进程，而是驱动 systemd 用户单元：
-#   三个单元里攒着的都是踩出来的细节 —— NapCat 要等 niri 的 wayland socket
+#   单元里攒着的都是踩出来的细节 —— NapCat 要等 niri 的 wayland socket
 #   再起（Electron 必须有显示）、dsh-web 要带 Clash 代理环境、崩了要自己回来。
 #   而且单元文件里写着真实 QQ 号（那只存在于部署侧）。这个仓库是公开的，
 #   所以本文件只驱动单元名和端口，不出现任何号码。
@@ -25,13 +25,15 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 NAPCAT_UNIT=napcat.service
 DSH_UNIT=dsh-web.service
 EVENTS_UNIT=qq-events.service
-UNITS=("$NAPCAT_UNIT" "$DSH_UNIT" "$EVENTS_UNIT")
+SEARCH_UNIT=qq-search.service
+UNITS=("$NAPCAT_UNIT" "$DSH_UNIT" "$EVENTS_UNIT" "$SEARCH_UNIT")
 
 # 端口是用来判「真的活了」的 —— systemd 说 active 不等于服务能干活
 # （NapCat 就是典型：进程在、端口没起，表现成「发消息不回复」）。
 NAPCAT_PORT=3000
 DSH_PORT=3080
 EVENTS_PORT=3999
+SEARCH_PORT=8888
 MAGPIE_PORT=3425 # 模型网关，用户自己的单元，本脚本只检查不动它
 
 # NapCat 的 --user-data-dir（见 ~/.local/bin/napcat-qq）。
@@ -124,9 +126,12 @@ cmd_start() {
     step "③ 事件适配器（戳一戳 → 桥）"
     start_one "$EVENTS_UNIT" "事件适配器" "$EVENTS_PORT" 20 || rc=1
 
+    step "④ 本地搜索（SearXNG）"
+    start_one "$SEARCH_UNIT" "本地搜索" "$SEARCH_PORT" 60 || rc=1
+
     step "结果"
     if [ "$rc" -eq 0 ]; then
-        echo "  三个都在跑。还剩一步只能手动做："
+        echo "  四个都在跑。还剩一步只能手动做："
         local url
         url=$(dsh_url)
         if [ -n "$url" ]; then
@@ -148,8 +153,8 @@ cmd_start() {
 }
 
 cmd_stop() {
-    step "停止（顺序：事件适配器 → DSH web → NapCat）"
-    systemctl --user stop "$EVENTS_UNIT" "$DSH_UNIT" "$NAPCAT_UNIT" 2>/dev/null
+    step "停止（顺序：本地搜索 → 事件适配器 → DSH web → NapCat）"
+    systemctl --user stop "$SEARCH_UNIT" "$EVENTS_UNIT" "$DSH_UNIT" "$NAPCAT_UNIT" 2>/dev/null
     sleep 1
 
     if pgrep -f "user-data-dir=$QQ_DATA_DIR" >/dev/null 2>&1; then
@@ -159,7 +164,7 @@ cmd_stop() {
     fi
 
     local u
-    for u in "$EVENTS_UNIT" "$DSH_UNIT" "$NAPCAT_UNIT"; do
+    for u in "$SEARCH_UNIT" "$EVENTS_UNIT" "$DSH_UNIT" "$NAPCAT_UNIT"; do
         if systemctl --user is-active --quiet "$u"; then bad "$u 还活着"; else ok "$u 已停"; fi
     done
     echo
@@ -178,6 +183,7 @@ cmd_status() {
 $NAPCAT_UNIT napcat $NAPCAT_PORT QQ协议端
 $DSH_UNIT dsh-web $DSH_PORT 桥的宿主
 $EVENTS_UNIT qq-events $EVENTS_PORT 戳一戳适配器
+$SEARCH_UNIT qq-search $SEARCH_PORT 本地搜索
 EOF
 
     if port_up "$MAGPIE_PORT"; then note=通; else note=不通; fi

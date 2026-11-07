@@ -1,0 +1,135 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ × DSH 开源组件接入清单</title>
+<style>body{max-width:1280px;margin:40px auto;padding:0 20px;font:16px/1.7 system-ui;color:#182b35;background:#fafcfd}h1,h2{line-height:1.3}a{color:#096b85}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:10px;border:1px solid #d5e0e5;vertical-align:top;text-align:left}th{background:#e9f2f5}pre{white-space:pre-wrap;background:#e9f2f5;padding:16px}.table{overflow-x:auto}small{color:#526675}code{overflow-wrap:anywhere}</style>
+<h1>QQ × DSH：开源组件接入清单</h1>
+<p>核对日期：2026-11-06。共 50 个可访问的候选仓库，覆盖联网、知识问答、长期记忆、拟人互动、QQ 生态、语音表情和订阅。维护日期、星数、归档状态和许可来自 GitHub API 当日快照；接入建议是结合本仓库代码作出的判断。</p>
+<p>保留 NapCat → dsh-qq-bridge → DSH 主链。<a href="opensource-catalog.json">机器可读清单</a> · <a href="qq-plugins.html">既有 DSH 插件目录</a> · <a href="research-memory-style.html">既有记忆与风格调研</a></p>
+<h2>第一项：联网与知识问答</h2>
+<p><code>qq_web_search</code> 调用本地 SearXNG，最多返回五条去重结果及来源；<code>qq_read_url</code> 调用 Jina Reader 读取公开网页，每次默认最多 6000 字，可按返回的 next_start 继续读。资料进入当前对话，模型据此回答；这一步不是持久化文档知识库。</p>
+<p>工具只在总开关开启、非试运行且允许联网时请求服务。网页只作为资料，并附有忽略网页指令、引用来源的说明。阅读默认使用 Jina 公共服务，用户提供的网址会发给该服务；不上传整段会话。设置入口：DSH → 通到 QQ → 消息 → 联网搜索与链接阅读。</p>
+<p>接口依据：<a href="https://docs.searxng.org/dev/search_api.html">SearXNG Search API</a>、<a href="https://github.com/jina-ai/reader#usage">Reader 使用说明</a>。Jina 阅读实测可用；搜索接口实测 HTTP 401，因此搜索采用 SearXNG。</p>
+<h2>体验迭代：长文续读与追问（已实现）</h2>
+<p>现在可以继续问“后半段讲了什么”。阅读工具返回 <code>next_start</code>，模型将它传入 <code>start</code> 即可续读；末尾返回 null。每个 QQ 会话独立缓存最近八页公开正文，有效期为抓取完成后十分钟；连续追问复用同一份内容。重启后缓存清空，不写入长期记忆。</p>
+<p>需要最新状态时使用 <code>refresh: true</code>，会同时跳过本地缓存与 <a href="https://github.com/jina-ai/reader#using-request-headers">Reader 的缓存</a>。工具标明本地获取时间 <code>fetched_at</code>、是否命中缓存和正文长度。长文跨越缓存有效期或主动刷新后可能变化，应从头重新阅读；该时间不是网页发布日期。</p>
+<h2>体验迭代：共同记忆查看、纠正与删除（已实现）</h2>
+<p>在 QQ 里说“列出你在这里记住的事”，模型可用 <code>list_common</code> 查看当前聊天的有效记录，每页十条，支持涉及的人和类别筛选。每条有固定编号，可继续说“把编号 12 改成……”或“忘掉编号 12”；编号以查询结果为准，不是列表顺序。</p>
+<p><code>update_common</code> 只纠正指定内容和可选类别，保留原事件日期；<code>forget_common</code> 精确删除一条。修改和删除都限当前群或当前私聊；旧的片段删除及 <code>remember_common</code> 的取代仅唯一命中时执行。来源不明、匹配歧义或保存失败会明确返回失败，总开关关闭或试运行时不执行写操作。</p>
+<p>沿用本地存储，无新增依赖。旧记录首次通过工具访问时补充持久编号，删除后不复用编号。这里只管理共同记忆，不包含群友簿、鱼的记忆或完整聊天历史；本次接入前本机没有共同记忆文件，初次列表为空属于正常结果，未创建虚构示例记忆。</p>
+<h2>体验迭代：群聊按需摘要（2026-11-07 已实现）</h2>
+<p>在当前群 @ 它说“总结最近一小时的讨论”或“哪些事定了，哪些还没定”。<code>qq_group_digest</code> 提供带发言人和时间的缓存记录，由当前对话模型整理讨论、明确结论、待办/未决，避免把提议当成定案。默认回看 60 分钟，可指定 1–1440 分钟；不接受其他群号，也不允许在私聊查询。</p>
+<p>复用正常轮询已取得的消息，包含未点名的群内讨论和机器人已发的消息，不会因此额外唤醒模型。每群最多保留最近一天的 500 条、每条 1000 字符；每页最多 80 条、正文合计 12000 字符。<code>next_before_id</code> 可用于继续读取较早记录；工具同时提供实际时间范围、截断条数和最近成功拉取时间。</p>
+<p>无新增依赖或模型服务。缓存只在内存中，重启清空；停用群绑定、关闭总开关或进入试运行后，下一次轮询清理缓存。摘要查询不新增历史请求，不自动发日报，也不写共同记忆。</p>
+<h2>体验迭代：免打扰与主动互动节奏（2026-11-07 已实现）</h2>
+<p>按聊天保存免打扰起止、时区、平时最小间隔、工作日最小间隔。本机选定北京时间 <code>Asia/Shanghai</code> 的 01:00–08:00 安静，平时至少 20 分钟、周一至周五至少 60 分钟。跨午夜可用，含起不含止；起止相同关闭安静时段，间隔取平时和工作日较大值。</p>
+<p>未点名群聊插话在入站处略过，不开模型回合，也不会到点补发；自动回复在推往 QQ 前按目标聊天把关。私聊来信、@、引用和叫名字按原回复流程处理，同一会话绑定多个聊天时，仅实际触发的聊天获得放行。成功主动发出后才记录冷却时间，部分成功也计时；该时间随原有水位保存，重启后继续生效。</p>
+<p>入口为“通到 QQ → 绑定 → 免打扰与主动互动”。<code>qq_interaction_settings</code> 可在聊天中查询、修改当前聊天的有限设置；群内修改接受主人（首个私聊绑定），私聊仅当前对象可改。无参数只查看，非法时间/时区不落盘，关闭或试运行时不执行工具修改。沿用现有主动搭话插件和消息链，不新增依赖。</p>
+<h2>体验迭代：聊天偏好（2026-11-07 已实现）</h2>
+<p><code>qq_chat_preferences</code> 保存当前聊天的私聊称呼、回复长短和语音偏好。可说“以后叫我阿云”“回答短一点”“先别发语音”；网页绑定页也能调整或恢复默认。群内整体设置仅主人可改，私聊仅当前对象可改。无参数只查询，试运行或关闭时不执行工具修改。</p>
+<p>称呼与长短挂在独立系统提示段，多个聊天共享会话时不混用；语音关闭由发送端执行，覆盖语音工具、唱歌与随机主动语音，并在合成完后再次读取设置。原有身份、人设、语音识别不变。两组新增测试已通过；真实 QQ 对话尚未验证。</p>
+<p>另存 <a href="personality-library.html">16 种性格候选</a>（<a href="personality-library.json">JSON</a>）：含对比示例、可复制模板和五个官方参考链接，全部仅收藏未启用。中文模板为项目原创整理，不是下载的上游角色卡，也不自动导入当前人设。</p>
+<h2>体验迭代：聊天文件问答（2026-11-07 已实现）</h2>
+<p>发送 PDF、TXT、Markdown、CSV、DOCX 或 XLSX 后，在当前聊天问“总结这份文件，标出出处”。<code>qq_read_document</code> 无参数列文件，指定返回的 <code>document_id</code> 读取；长内容按 <code>next_page</code> 和 <code>next_start</code> 续读。群文件遵从原有点名规则，不自动读取或总结每个上传文件；私聊纯文件不再静默丢弃。</p>
+<p>复用 <a href="https://doc.napneko.icu/develop/file">NapCat 文件接口</a>（参数核对其 <a href="https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/action/example/FileActionsExamples.ts">源码示例</a>）和本机已有 <a href="https://poppler.freedesktop.org/">Poppler</a> 的 pdfinfo / pdftotext，未安装第二套文档框架。PDF 返回实际文件页码，文本返回行号；临时 PDF 解析完删除，不发给 Reader 服务，提取正文交给当前对话模型回答。</p>
+<p>DOCX/XLSX 使用 Python 3 标准库读取 ZIP/XML，未安装 Office 框架。依据微软的 <a href="https://learn.microsoft.com/en-us/office/open-xml/word/how-to-open-and-add-text-to-a-word-processing-document">Word 正文结构</a>和 <a href="https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/how-to-retrieve-the-values-of-cells-in-a-spreadsheet">Excel 单元格结构</a>实现；Word 引用段落/表格行，Excel 引用工作表/单元格，分段编号不是 Office 页码。公式只读缓存且标明可能过期，无缓存时不计算；数字不应用格式，日期可能是序列数，隐藏表及行列也会读取。</p>
+<p>每聊天保留最近一小时最多十份文件记录和提取缓存，重启或停用后清空。工具不接受任意路径、网址或跨聊天编号。最大 10MB，PDF 最多前 100 页，Excel 最多前 20 张表和 2 万个非空单元格，Word 最多 2 万个非空段落/表格行，Office XML 解压后累计上限 16MB；正文总计 20 万字符，每次至多 6000 字符，截断明确标记。不做 OCR，不读取 DOC/XLS、宏格式、图片图表、嵌套转发附件或 Word 页眉页脚/批注/脚注/文本框，不还原复杂布局。消息直链失效且有 file_id 时只重新获取链接下载一次。Office、链接恢复、原有 PDF/文本解析测试通过；真实 QQ 文件对话尚未验证。</p>
+<h2>体验迭代：工具与提示挂载清理（2026-11-07）</h2>
+<p>门槛、空间和其他 QQ 工具均跟踪实际会话实例，实例替换后重新挂载；多个绑定共享同一会话只注册一份。停用最后一个绑定或卸载插件会撤销工具，热重载不会残留旧注册。人设和偏好提示的并发装配复用待完成任务，卸载立即撤销，异步完成后不会重新出现。两组生命周期测试通过；未修改人设内容，16 份候选仍仅收藏。</p>
+<h2>额外体验修复：重启恢复会话（2026-11-07 已实现）</h2>
+<p>已启用且未归档的 QQ 绑定由 DSH 会话控制器恢复原会话，失败每分钟再试；关闭或试运行时不恢复。绑定状态按实际 agent 显示，会话替换后重新挂工具。本机已确认四个绑定恢复成功、聊天偏好工具全部挂载；原有两份人设与仓库模板对账一致。</p>
+<h2>后续按真实使用反馈扩展</h2>
+<p>当前五项体验迭代已有可用实现。下一轮优先看真实 QQ 文件、语音或回复失败样本，再决定是否需要 Office/OCR、复杂表格解析、语义检索或换语音模型；MarkItDown、Docling 等仍保留为候选。没有创建定时开发任务，也没有自动启用收藏的性格。</p>
+<h2>第二项：主动回忆与拟人对话</h2>
+<p><code>recall_common</code> 让模型按人名、事情或关键词主动查询已保存的共同记忆，返回类型、日期、来源和内容；支持筛选事件、事实、约定。无命中返回空结果，排除已取代和已过期条目，私聊检索限当前对象，群记忆沿用原有跨群共享规则。</p>
+<p>参考 <a href="https://github.com/sakurawwwxh/qq-agent-plus">qq-agent-plus</a> 的显式回忆工具思路，以及 <a href="https://github.com/dorianbrown/rank_bm25">rank_bm25</a> 的词频和长度排序。BM25 使用本地独立实现的正 IDF 变体，并结合现有时间衰减；没有安装这些项目，也没有把它们的代码复制进桥。原来的自动摘要、群友簿、心情、主动搭话插件继续工作。</p>
+<h2>按依赖顺序推进</h2>
+<ol><li>已实现：搜索、链接阅读、带来源的回答。</li><li>已实现：显式记忆检索与日期/作用域信息。</li><li>文件问答已接入 Poppler 和 DOCX/XLSX 基本文字提取；扫描件、复杂表格或排版还原有实际需求时，再比较 MarkItDown / Docling。</li><li>有回忆失败样本后：比较现有 BM25 与语义检索，再决定是否引入 Mem0、MemOS 或向量库。</li><li>有互动样本后：参考 MaiBot 的发言判断，调整现有 dsh-speak-up/门槛；不并行启动第二条 QQ 消息处理链。</li></ol>
+<h2>本地部署</h2>
+<p>源码和 Python 环境在项目忽略目录 <code>.runtime/</code>，与机器人原有依赖隔离。安装使用 uv；无需 Docker。下列命令在仓库根目录运行：</p>
+<pre>git clone --depth 1 https://github.com/searxng/searxng.git .runtime/searxng
+uv venv .runtime/qq-search --python 3.12
+uv pip install --python .runtime/qq-search/bin/python -r .runtime/searxng/requirements.txt granian
+# 首次部署生成本地配置；已有配置时跳过，命令不会覆盖现有文件
+python3 - &lt;&lt;'PY'
+from pathlib import Path
+import secrets
+template = Path('deploy/searxng-settings.yml.template').read_text()
+config = Path('deploy/searxng-settings.yml')
+with config.open('x', encoding='utf-8') as output:
+    config.chmod(0o600)
+    output.write(template.replace('REPLACE_WITH_RANDOM_SECRET', secrets.token_hex(32)))
+PY
+# 将 deploy/qq-search.service.template 中 &lt;REPO&gt; 换成仓库绝对路径，
+# 保存到 ~/.config/systemd/user/qq-search.service
+# 本机 DSH 已通过 EnvironmentFile 配置 Clash 代理；另将
+# deploy/dsh-web-network.conf 安装为
+# ~/.config/systemd/user/dsh-web.service.d/60-qq-web-network.conf
+systemctl --user daemon-reload
+systemctl --user start qq-search.service
+systemctl --user restart dsh-web.service
+# 通到 QQ 的搜索地址：http://127.0.0.1:8888
+# 通到 QQ 的阅读地址：https://r.jina.ai</pre>
+<p>服务仅监听回环地址。实际配置为 <code>deploy/searxng-settings.yml</code>，含本机随机密钥，已加入 Git 忽略规则；仓库只保存 <code>deploy/searxng-settings.yml.template</code>。服务是否开机启动与现有机器人一样由用户决定，不自动 enable。更换 Reader 时只改阅读服务地址。停止搜索：<code>systemctl --user stop qq-search.service</code>。<code>start-all.sh</code> 已把搜索纳入整套启停、状态和自启管理。</p>
+<h2>候选项目逐项对应</h2><p>“本次借鉴”表示实现思路已应用；“本次接入”表示增加了 API 接口；“已有”来自本仓库现状。其余项目没有安装。未识别/NOASSERTION 表示必须看 LICENSE 原文，不能推断为宽松许可。星数只记录关注度。</p>
+<h3>联网、阅读与知识问答</h3><div class="table"><table><thead><tr><th>项目 / 核对深度</th><th>Stars / 最近推送</th><th>许可 / 状态</th><th>采用方式</th><th>在本项目中的位置</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/searxng/searxng">searxng/searxng</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>39278<br>2026-11-06</td><td>AGPL-3.0<br>未归档</td><td>本次接入</td><td>独立本地搜索服务 → qq_web_search；启用 JSON，保留来源链接。</td></tr>
+<tr><td><a href="https://github.com/jina-ai/reader">jina-ai/reader</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>12241<br>2026-05-22</td><td>Apache-2.0<br>未归档</td><td>本次接入</td><td>HTTP 正文读取 → qq_read_url；本轮使用公共 Reader，不使用需要 Key 的搜索接口。</td></tr>
+<tr><td><a href="https://github.com/mozilla/readability">mozilla/readability</a><br><small>GitHub 仓库元数据</small></td><td>11528<br>2026-08-04</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>本地 HTML 正文抽取；需要 DOM 实现，适合将来替代公共 Reader。</td></tr>
+<tr><td><a href="https://github.com/adbar/trafilatura">adbar/trafilatura</a><br><small>GitHub 仓库元数据</small></td><td>7082<br>2026-11-05</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>本地正文提取与元数据；可复用现有 Python 胶水模式，需另做 URL 获取边界。</td></tr>
+<tr><td><a href="https://github.com/unclecode/crawl4ai">unclecode/crawl4ai</a><br><small>GitHub 仓库元数据</small></td><td>86985<br>2026-11-04</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>浏览器渲染的复杂网页；需要浏览器运行环境，普通链接先用 Reader。</td></tr>
+<tr><td><a href="https://github.com/microsoft/markitdown">microsoft/markitdown</a><br><small>GitHub 仓库元数据</small></td><td>194141<br>2026-10-28</td><td>MIT<br>未归档</td><td>后续候选</td><td>文档转 Markdown；适合群文件知识问答前处理，不等于完整知识库。</td></tr>
+<tr><td><a href="https://github.com/docling-project/docling">docling-project/docling</a><br><small>GitHub 仓库元数据</small></td><td>70203<br>2026-11-06</td><td>MIT<br>未归档</td><td>后续候选</td><td>复杂 PDF/表格文档转换；先准备真实文档样本再选择。</td></tr>
+<tr><td><a href="https://github.com/HKUDS/LightRAG">HKUDS/LightRAG</a><br><small>GitHub 仓库元数据</small></td><td>40572<br>2026-11-05</td><td>MIT<br>未归档</td><td>后续候选</td><td>文档知识库检索；有稳定资料集后通过服务 API 接，不替换聊天记忆。</td></tr>
+<tr><td><a href="https://github.com/infiniflow/ragflow">infiniflow/ragflow</a><br><small>GitHub 仓库元数据</small></td><td>93672<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>重型候选</td><td>完整文档 RAG 平台；额外服务多，当前没有必须迁入的资料库。</td></tr>
+<tr><td><a href="https://github.com/run-llama/llama_index">run-llama/llama_index</a><br><small>GitHub 仓库元数据</small></td><td>52831<br>2026-11-05</td><td>MIT<br>未归档</td><td>方案参考</td><td>文档检索流程与数据接入；暂不把框架塞入桥。</td></tr>
+<tr><td><a href="https://github.com/deepset-ai/haystack">deepset-ai/haystack</a><br><small>GitHub 仓库元数据</small></td><td>26934<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>方案参考</td><td>可组合检索流水线；资料库形成后再评估。</td></tr>
+<tr><td><a href="https://github.com/langgenius/dify">langgenius/dify</a><br><small>GitHub 仓库元数据</small></td><td>160539<br>2026-11-06</td><td>NOASSERTION<br>未归档</td><td>自定义许可候选</td><td>可通过应用 API 接知识问答；先阅读 LICENSE，不能按普通 Apache 许可处理。</td></tr>
+</tbody></table></div>
+<h3>长期记忆与拟人互动</h3><div class="table"><table><thead><tr><th>项目 / 核对深度</th><th>Stars / 最近推送</th><th>许可 / 状态</th><th>采用方式</th><th>在本项目中的位置</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/Mai-with-u/MaiBot">Mai-with-u/MaiBot</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>6878<br>2026-11-06</td><td>GPL-3.0<br>未归档</td><td>方案参考</td><td>观察拟人互动、发言判断和人格设计；当前 dsh-speak-up/门槛已承担主动互动。</td></tr>
+<tr><td><a href="https://github.com/sakurawwwxh/qq-agent-plus">sakurawwwxh/qq-agent-plus</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>104<br>2026-11-06</td><td>MIT<br>未归档</td><td>本次借鉴</td><td>参考显式记忆检索工具思路；沿用本项目 JSON 数据，不复制另一套 QQ 入口。</td></tr>
+<tr><td><a href="https://github.com/wingbire/dsh-qq-assistant">wingbire/dsh-qq-assistant</a><br><small>GitHub 仓库元数据</small></td><td>2<br>2026-10-22</td><td>AGPL-3.0<br>未归档</td><td>方案参考</td><td>发言判断的另一种实现；当前门控已经存在，不叠加第二个收消息进程。</td></tr>
+<tr><td><a href="https://github.com/mem0ai/mem0">mem0ai/mem0</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>68510<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>可供参考的检索、更新和多层记忆接口；现阶段 300 条共同记忆用本地查找。</td></tr>
+<tr><td><a href="https://github.com/MemTensor/MemOS">MemTensor/MemOS</a><br><small>GitHub 仓库元数据</small></td><td>12299<br>2026-11-04</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>记忆生命周期和管理层；接入前要明确本地数据迁移、作用域和额外存储。</td></tr>
+<tr><td><a href="https://github.com/getzep/graphiti">getzep/graphiti</a><br><small>GitHub 仓库元数据</small></td><td>32587<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>时序关系图记忆；群友关系查询需求明确后再建图。</td></tr>
+<tr><td><a href="https://github.com/letta-ai/letta">letta-ai/letta</a><br><small>GitHub 仓库元数据</small></td><td>25369<br>2026-10-18</td><td>Apache-2.0<br>未归档</td><td>方案参考</td><td>持久化智能体记忆；与 DSH 运行时职责重叠，参考设计。</td></tr>
+<tr><td><a href="https://github.com/memodb-io/memobase">memodb-io/memobase</a><br><small>GitHub 仓库元数据</small></td><td>2950<br>2026-01-11</td><td>Apache-2.0<br>未归档</td><td>后续候选</td><td>用户画像服务；可补群友簿，先避免与既有画像重复保存。</td></tr>
+<tr><td><a href="https://github.com/topoteretes/cognee">topoteretes/cognee</a><br><small>GitHub 仓库元数据</small></td><td>33112<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>重型候选</td><td>图与向量知识记忆；需要用真实回忆问题证明优于当前检索。</td></tr>
+<tr><td><a href="https://github.com/dorianbrown/rank_bm25">dorianbrown/rank_bm25</a><br><small>仓库元数据 + 官方 README/文档/源码</small></td><td>1416<br>2026-05-02</td><td>Apache-2.0<br>未归档</td><td>本次借鉴</td><td>参考 BM25 词频和长度排序；本地独立实现正 IDF 变体，没有安装该 Python 包。</td></tr>
+<tr><td><a href="https://github.com/qdrant/qdrant">qdrant/qdrant</a><br><small>GitHub 仓库元数据</small></td><td>35446<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>存储候选</td><td>向量索引服务；只有实际采用 embedding 检索时才需要。</td></tr>
+<tr><td><a href="https://github.com/chroma-core/chroma">chroma-core/chroma</a><br><small>GitHub 仓库元数据</small></td><td>29648<br>2026-10-30</td><td>Apache-2.0<br>未归档</td><td>存储候选</td><td>向量检索存储；和 Qdrant 二选一，不叠加。</td></tr>
+<tr><td><a href="https://github.com/asg017/sqlite-vec">asg017/sqlite-vec</a><br><small>GitHub 仓库元数据</small></td><td>8240<br>2026-05-18</td><td>Apache-2.0<br>未归档</td><td>存储候选</td><td>SQLite 向量扩展；比独立数据库轻，但仍需 embedding 模型与数据迁移。</td></tr>
+</tbody></table></div>
+<h3>QQ 协议、框架与插件生态</h3><div class="table"><table><thead><tr><th>项目 / 核对深度</th><th>Stars / 最近推送</th><th>许可 / 状态</th><th>采用方式</th><th>在本项目中的位置</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/NapNeko/NapCatQQ">NapNeko/NapCatQQ</a><br><small>GitHub 仓库元数据</small></td><td>12311<br>2026-11-03</td><td>NOASSERTION<br>未归档</td><td>已有</td><td>现用协议端；复用已有 OneBot API。许可证为自定义/未被 GitHub 识别，读原文。</td></tr>
+<tr><td><a href="https://github.com/botuniverse/onebot-11">botuniverse/onebot-11</a><br><small>GitHub 仓库元数据</small></td><td>720<br>2024-04-27</td><td>未识别<br>未归档</td><td>已有协议</td><td>消息段、事件与 API 的协议来源；规格仓库不是插件依赖。</td></tr>
+<tr><td><a href="https://github.com/nonebot/nonebot2">nonebot/nonebot2</a><br><small>GitHub 仓库元数据</small></td><td>7778<br>2026-11-04</td><td>MIT<br>未归档</td><td>方案参考</td><td>丰富 Python 插件生态；只抽取需要的底层能力，不并行监听同一 QQ。</td></tr>
+<tr><td><a href="https://github.com/nonebot/adapter-onebot">nonebot/adapter-onebot</a><br><small>GitHub 仓库元数据</small></td><td>119<br>2026-11-02</td><td>MIT<br>未归档</td><td>协议参考</td><td>OneBot 事件与消息适配方式；当前桥直接调用 HTTP，暂不新增适配层。</td></tr>
+<tr><td><a href="https://github.com/koishijs/koishi">koishijs/koishi</a><br><small>GitHub 仓库元数据</small></td><td>6316<br>2026-10-08</td><td>MIT<br>未归档</td><td>方案参考</td><td>Node 插件框架；可以学习插件功能组织，当前不迁移运行时。</td></tr>
+<tr><td><a href="https://github.com/AstrBotDevs/AstrBot">AstrBotDevs/AstrBot</a><br><small>GitHub 仓库元数据</small></td><td>46226<br>2026-11-05</td><td>AGPL-3.0<br>未归档</td><td>方案参考</td><td>综合 AI 机器人生态；选择插件的引擎/API 接入点，保留 DSH 为主链。</td></tr>
+<tr><td><a href="https://github.com/Yuuyuko-uu/dsh-qq-link">Yuuyuko-uu/dsh-qq-link</a><br><small>GitHub 仓库元数据</small></td><td>172<br>2026-11-02</td><td>NOASSERTION<br>未归档</td><td>已有本地分叉</td><td>桥的直接上游；继续三方合并，保留原作者及自定义许可。</td></tr>
+<tr><td><a href="https://github.com/Yuuyuko-uu/awesome-dsh-plugin">Yuuyuko-uu/awesome-dsh-plugin</a><br><small>GitHub 仓库元数据</small></td><td>9<br>2026-11-05</td><td>CC0-1.0<br>未归档</td><td>生态入口</td><td>先检索原生 DSH 插件，避免重复实现宿主已有能力。</td></tr>
+<tr><td><a href="https://github.com/qqbot-hub/qqbot-plugins">qqbot-hub/qqbot-plugins</a><br><small>GitHub 仓库元数据</small></td><td>5<br>2026-10-31</td><td>MIT<br>未归档</td><td>待逐项验证</td><td>同链路 MCP 工具市场候选；工具数是上游声称，未逐个安装实测，不整体导入。</td></tr>
+<tr><td><a href="https://github.com/OlivOS-Team/OlivOS">OlivOS-Team/OlivOS</a><br><small>GitHub 仓库元数据</small></td><td>252<br>2026-11-04</td><td>AGPL-3.0<br>未归档</td><td>方案参考</td><td>多平台机器人框架；多平台迁移需求出现后再考虑。</td></tr>
+<tr><td><a href="https://github.com/whyever77/dafeiyu-astrbot">whyever77/dafeiyu-astrbot</a><br><small>GitHub 仓库元数据</small></td><td>738<br>2026-11-06</td><td>MIT<br>未归档</td><td>组合参考</td><td>QQ + AI 配套示例；参考能力组合，当前已有相应桥和语音链。</td></tr>
+</tbody></table></div>
+<h3>表情、语音与角色表现</h3><div class="table"><table><thead><tr><th>项目 / 核对深度</th><th>Stars / 最近推送</th><th>许可 / 状态</th><th>采用方式</th><th>在本项目中的位置</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/nagatoquin33/astrbot_plugin_stealer">nagatoquin33/astrbot_plugin_stealer</a><br><small>GitHub 仓库元数据</small></td><td>87<br>2026-11-05</td><td>AGPL-3.0<br>未归档</td><td>方案参考</td><td>表情收藏参考；现有表情库已实现候选与收藏。</td></tr>
+<tr><td><a href="https://github.com/JREion/astrbot_plugin_smart_imagechat_hub">JREion/astrbot_plugin_smart_imagechat_hub</a><br><small>GitHub 仓库元数据</small></td><td>6<br>2026-06-13</td><td>GPL-3.0<br>未归档</td><td>后续候选</td><td>智能图聊和斗图参考；先衡量视觉模型成本。</td></tr>
+<tr><td><a href="https://github.com/MemeCrafters/meme-generator">MemeCrafters/meme-generator</a><br><small>GitHub 仓库元数据</small></td><td>1043<br>2026-10-06</td><td>MIT<br>未归档</td><td>已有</td><td>qq_meme 已用引擎；沿用当前版本和输出限制。</td></tr>
+<tr><td><a href="https://github.com/MemeCrafters/nonebot-plugin-memes">MemeCrafters/nonebot-plugin-memes</a><br><small>GitHub 仓库元数据</small></td><td>313<br>2026-10-06</td><td>MIT<br>未归档</td><td>方案参考</td><td>同一引擎的机器人交互参考；不用再装 NoneBot。</td></tr>
+<tr><td><a href="https://github.com/RVC-Boss/GPT-SoVITS">RVC-Boss/GPT-SoVITS</a><br><small>GitHub 仓库元数据</small></td><td>65001<br>2026-10-31</td><td>MIT<br>未归档</td><td>后续候选</td><td>另一种语音合成/声音克隆路线；现有语音可用，先做音色对比再替换。</td></tr>
+<tr><td><a href="https://github.com/QwenAudio/SenseVoice">QwenAudio/SenseVoice</a><br><small>GitHub 仓库元数据</small></td><td>9704<br>2026-09-30</td><td>MIT<br>未归档</td><td>已有</td><td>入站语音识别使用的模型路线；原 FunAudioLLM 仓库已跳转到此。</td></tr>
+<tr><td><a href="https://github.com/k2-fsa/sherpa-onnx">k2-fsa/sherpa-onnx</a><br><small>GitHub 仓库元数据</small></td><td>15783<br>2026-11-06</td><td>Apache-2.0<br>未归档</td><td>已有</td><td>现有 ASR 脚本使用的 ONNX 推理接口。</td></tr>
+<tr><td><a href="https://github.com/rhasspy/piper">rhasspy/piper</a><br><small>GitHub 仓库元数据</small></td><td>11317<br>2025-08-26</td><td>MIT<br>已归档</td><td>归档参考</td><td>旧 Piper 仓库已归档；新部署看后继仓库，不按活跃项目选。</td></tr>
+<tr><td><a href="https://github.com/rany2/edge-tts">rany2/edge-tts</a><br><small>GitHub 仓库元数据</small></td><td>12466<br>2026-10-14</td><td>NOASSERTION<br>未归档</td><td>已有</td><td>qq_voice 当前合成路线；代码许可须读原文，服务本身是外部在线服务。</td></tr>
+<tr><td><a href="https://github.com/SYSTRAN/faster-whisper">SYSTRAN/faster-whisper</a><br><small>GitHub 仓库元数据</small></td><td>26523<br>2026-11-02</td><td>MIT<br>未归档</td><td>后续候选</td><td>替代 ASR 推理；有现有模型听错的音频样本后再比较。</td></tr>
+<tr><td><a href="https://github.com/OHF-Voice/piper1-gpl">OHF-Voice/piper1-gpl</a><br><small>GitHub 仓库元数据</small></td><td>6188<br>2026-11-02</td><td>GPL-3.0<br>未归档</td><td>后续候选</td><td>本地 TTS 路线；代码与每个音色模型的许可分开核对。</td></tr>
+</tbody></table></div>
+<h3>订阅与信息来源</h3><div class="table"><table><thead><tr><th>项目 / 核对深度</th><th>Stars / 最近推送</th><th>许可 / 状态</th><th>采用方式</th><th>在本项目中的位置</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/DIYgod/RSSHub">DIYgod/RSSHub</a><br><small>GitHub 仓库元数据</small></td><td>46846<br>2026-11-06</td><td>AGPL-3.0<br>未归档</td><td>后续候选</td><td>给知识问答或订阅提供 RSS 源；当前未启用主动推送。</td></tr>
+<tr><td><a href="https://github.com/RSSNext/Folo">RSSNext/Folo</a><br><small>GitHub 仓库元数据</small></td><td>39241<br>2026-11-05</td><td>AGPL-3.0<br>未归档</td><td>方案参考</td><td>阅读与订阅产品参考；不是可直接塞入 DSH 的插件。</td></tr>
+<tr><td><a href="https://github.com/Quan666/ELF_RSS">Quan666/ELF_RSS</a><br><small>GitHub 仓库元数据</small></td><td>609<br>2026-11-06</td><td>GPL-3.0<br>未归档</td><td>方案参考</td><td>RSS 订阅去重与推送交互参考；不用另启一个 QQ 框架。</td></tr>
+</tbody></table></div>
+<h2>验证结果</h2><p>2026-11-07 本轮：Office、失效链接恢复、工具生命周期、提示生命周期四组新增测试通过；原 PDF/文本解析、聊天偏好宿主、会话恢复及五组既有桥回归通过。部署后四个绑定全部恢复，文件阅读和偏好工具各挂载 4/4，启动增量日志无重复注册或挂载错误。document-host.mjs 已经用户确认调整：卸载前保存工具句柄，卸载后同时断言注册已移除、旧句柄拒绝读取；调整后整组通过，原有检查保留。此前的旧测试失败已解决，本次只改测试与验证记录，无需重启服务。没有向真实 QQ 发送测试消息。</p><p>2026-11-07 文件问答：document-reader.mjs、document-host.mjs 通过；系统自带 IJS 规范 PDF 实际提取 12/12 页、未截断。宿主/网页/合并/生命周期/单次投递五组回归通过。部署后服务 active，四个绑定全部恢复，聊天偏好与读聊天文档两项工具均挂载 4/4。尚未向真实 QQ 发送文件或测试消息。</p><p>2026-11-07：聊天偏好两组、会话恢复一组测试通过；四个运行中的 QQ 绑定恢复及工具挂载已核实。原有两份人设与仓库模板一致，16 种候选仅收藏。</p><p>2026-11-07 互动节奏：interaction-policy.mjs、interaction-host.mjs 两组定向测试通过，覆盖跨午夜/时区/工作日、明确呼叫和私聊放行、闲聊不补发、自动轮次不能借用唤醒尾巴、多绑定按来源放行、设置权限与原子保存、重启冷却、失败和并发发送。宿主/网页语法检查和五组既有回归通过；出站路由调整后相关宿主回归再次通过，原有测试未修改。</p><p>已备份本机配置并给现有四个聊天应用 01:00–08:00（Asia/Shanghai）、平时 20 分钟、工作日 60 分钟。dsh-web 重启后为 active，日志确认“互动设置”挂载成功；通过正常登录流程读取运行中的管理接口，四个聊天的配置均与选定值一致。备份位于 <code>~/.dsh/qq-bridge-config.before-interaction-*.json</code>。未发送真实 QQ 测试消息。</p><p>2026-11-07 群聊摘要：group-digest.mjs 与 group-digest-host.mjs 两组定向测试通过，覆盖按群隔离、去重、时间范围、分页、附件占位、容量/字数上限、过期、轮询复用、失败时间以及开关/停止。宿主语法检查及五组既有回归全部通过（使用 DSH 实际 Node 运行时）；原有测试未修改。已重启 dsh-web，服务为 active，新增日志确认“群聊摘要”工具在当前活跃会话挂载成功；未向真实 QQ 聊天发送测试消息。</p><p>记忆管理迭代：memory-management.mjs、memory-tools-host.mjs、memory-query.mjs、research-tools-host.mjs 四组定向检查通过，覆盖编号迁移/重启、分页、当前聊天隔离、纠正/删除/取代、歧义拒绝、保存失败和写入开关。宿主语法检查通过；使用 DSH 实际 Node 运行时执行五组既有回归，全部通过。测试仅使用临时记忆文件和模拟 QQ 接口。随后已重启 dsh-web，服务为 active，重启后的新增日志确认“列共同记忆”和“纠正共同记忆”已在当前活跃会话挂载；未向真实 QQ 聊天发送测试消息。</p><p>长文体验迭代：reader-experience.mjs 与 web-tools.mjs 两组定向测试通过，覆盖连续分页、emoji 边界、十分钟过期、强制刷新失败、会话/服务隔离及八页缓存淘汰。使用公开 SearXNG 文档的真实调用也成功：取得 2799 字正文，第二段直接命中会话缓存。</p><p>2026-11-06：三组新增测试（联网工具、主动回忆、宿主工具注册）通过；网页、消息合并、生命周期、单次投递四组既有回归通过。真实 SearXNG 搜索返回资料，使用 DSH Node 与代理配置调用桥的搜索和阅读函数均成功。未向真实 QQ 聊天发送测试消息。</p><p>本机已安装 qq-search 用户服务和 DSH 的 Node 代理配置，两个服务均已启动；SearXNG 的 /config 已就绪。重启后的桥日志确认 qq_web_search、qq_read_url、recall_common（日志名“查共同记忆”）全部挂载成功。未开启开机自启。DSH 重启后若网页需要重新登录，用仓库的 <code>./start-all.sh url</code> 获取当前入口。</p><h2>限制与待验证</h2><p>免打扰控制 QQ 插话与推送，不暂停 DSH 内部自动任务；主动搭话插件仍按自身规则运行，不能据此保证自动回合不消耗模型额度。明确呼叫仍受原有绑定开关、点名规则及发送节流约束。自然语言修改尚未在真实 QQ 对话中端到端验证。</p><p>群聊摘要只覆盖轮询取得的部分消息，不能声称完整历史。图片、语音、卡片、合并转发和引用未展开，不猜测内容；截断消息的后文未知。实际摘要由当前对话模型生成，尚未通过真实 QQ 消息做端到端验证。</p>
+<ul><li>先前迭代曾出现两项语音转写测试失败，并在仓库 HEAD 原版代码复现；本次使用 DSH 实际 Node 运行时执行宿主综合回归，两项均通过，未修改或弱化原有测试，也未据此断言先前失败的原因。真实 QQ 的记忆对话尚未端到端测试。</li><li>候选清单以元数据核对为主，只有标注的项目进一步阅读了官方说明/源码；没有声称 50 个项目均完成集成或实测。</li><li>搜索受各上游引擎的验证码、限流和网络影响；Reader 公共服务也有限额。失败显式报告，不编造资料。</li><li>默认 Reader 为远程服务。改为自托管时，应由 Reader 运维侧限制其访问内网；桥不直接抓取用户 URL，也不提供登录态网页读取。</li><li>本轮回忆是已存记忆的关键词检索，不支持同义词语义召回、完整历史搜索或自动记住每句话；原自动摘要策略没有改变。</li><li>记忆列表和修改/删除限当前聊天；群里的关键词回忆仍沿用原有跨群共享，自动摘要注入策略未改。共同记忆为空不代表其他记忆层也为空。</li><li>代码许可、模型权重许可和在线服务条款是不同层面；自定义许可证项目需逐个阅读，清单不是许可合规结论。</li></ul>
+</html>
