@@ -26,7 +26,7 @@ async function 取JSON(url, timeout, init = {}) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-function 公开网址(value) {
+export function 公开网址(value) {
   const url = new URL(String(value || ''))
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   // 阅读请求由 Reader 服务获取；禁止把本地地址、凭据 URL 当作公开链接转交。

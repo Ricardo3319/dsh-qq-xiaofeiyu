@@ -76,7 +76,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 
 ### 免打扰与主动互动节奏（2026-11-07）
 
-每个群、每个私聊可以单独设置。此次选择的本机默认值：**北京时间（Asia/Shanghai）01:00–08:00 免打扰，平时主动互动至少间隔 20 分钟，周一至周五至少 60 分钟**。只限制未点名的群聊插话与自动 QQ 推送；私聊来信、@、引用和明确叫名字仍按原回复流程处理。一次点名只放行实际发来消息的聊天，同一 DSH 会话绑定的其他聊天仍按各自设置判断。
+每个群、每个私聊可以单独设置。此次选择的本机默认值：**北京时间（Asia/Shanghai）01:00–08:00 免打扰，平时主动互动至少间隔 20 分钟，周一至周五至少 60 分钟**。只限制未点名的群聊插话与自动 QQ 推送；私聊来信、@、引用和明确叫名字仍按原回复流程处理，被叫醒后同一轮回复紧接着的后续轮次也按这次触发的聊天处理，不当作主动推送。一次点名只放行实际发来消息的聊天，同一 DSH 会话绑定的其他聊天仍按各自设置判断。
 
 入口：**通到 QQ → 绑定 → 对应聊天 → 免打扰与主动互动**，修改后点“保存设置”。也可以在 QQ 里说“查看当前免打扰设置”“把免打扰改成北京时间 23 点到早上 8 点”“工作日主动互动间隔改成 120 分钟”，由 `qq_interaction_settings` 查询或修改当前聊天。群内修改需由主人提出（沿用首个私聊绑定作为主人）；私聊只能修改当前对象的设置。网页管理入口仍可修改所有绑定。
 
@@ -100,7 +100,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 
 在当前 QQ 聊天发送 PDF、TXT、Markdown、CSV、Word（DOCX）或 Excel（XLSX）后，可以问“总结这份文件并标出出处”“这份表里哪些事项还没完成，给出单元格位置”或“继续读后面的内容”。`qq_read_document` 无参数列出文件；使用返回的 `document_id` 读取，长内容按 `next_page`、`next_start` 续读。群文件遵守原有点名规则，可随后 @ 它提出问题；私聊纯文件会留下文件名和编号提示。
 
-复用 [NapCat 文件接口](https://doc.napneko.icu/develop/file) 与本机已有的 [Poppler](https://poppler.freedesktop.org/)（`pdfinfo`、`pdftotext`）；Office 由系统 Python 3 的 ZIP/XML 标准库提取，结构依据微软的 [Word 正文说明](https://learn.microsoft.com/en-us/office/open-xml/word/how-to-open-and-add-text-to-a-word-processing-document)和 [Excel 单元格说明](https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/how-to-retrieve-the-values-of-cells-in-a-spreadsheet)，未新增模型服务或 Python 依赖。只有工具按需读取才获取下载地址和正文；不会把文件发给 Jina Reader。解析后的正文仍会交给当前对话模型用于回答。消息自带链接返回 401/403/404/410 且有文件编号时，向 NapCat 重新获取链接并下载一次；其他错误不自动重试。
+复用 [NapCat 文件接口](https://doc.napneko.icu/develop/file) 与本机已有的 [Poppler](https://poppler.freedesktop.org/)（`pdfinfo`、`pdftotext`）；Office 由系统 Python 3 的 ZIP/XML 标准库提取，结构依据微软的 [Word 正文说明](https://learn.microsoft.com/en-us/office/open-xml/word/how-to-open-and-add-text-to-a-word-processing-document)和 [Excel 单元格说明](https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/how-to-retrieve-the-values-of-cells-in-a-spreadsheet)，未新增模型服务或 Python 依赖。只有工具按需读取才获取下载地址和正文；不会把文件发给 Jina Reader。解析后的正文仍会交给当前对话模型用于回答。下载只接受公开 HTTP(S) 地址，回环、链路本地、内网字面量和带凭据的链接不会由桥进程直接请求。消息自带链接返回 401/403/404/410 且有文件编号时，向 NapCat 重新获取链接并下载一次；其他错误不自动重试。
 
 每个聊天只保留最近一小时正常轮询取得的十份文件记录及已解析正文，重启或停用绑定后清空，不写长期记忆。编号不能跨聊天查询，工具不接收任意路径或网址。临时 PDF 放在独立临时目录，解析完成后删除；提取与下载都有超时和大小限制。文件内容只作为资料，不能用于修改设置或要求执行工具。
 
@@ -151,7 +151,7 @@ DSH 会话（agent preset：人设 / 记忆 / 心情 / 主动搭话 …）
 | | 存什么 | 作用域 |
 |---|---|---|
 | **群友簿**（`lib/群友簿.js`） | 谁是谁：昵称 / 别名 / 印象 | 按 QQ 号，**跨聊天共享** |
-| **共同记忆**（`lib/共同记忆.js`） | 发生过什么：答应过谁什么、约好什么 | 一份，**按来源分流注入**（群的事只在群里想起，私聊的话只在私聊想起） |
+| **共同记忆**（`lib/共同记忆.js`） | 发生过什么：答应过谁什么、约好什么 | 一份，**按来源分流注入**（群的事只在群里想起；私聊按对象隔离，A 的私事不会带进 B 的私聊） |
 | 会话记忆（外部插件 `dsh-fish-memory`） | 事件 / 长期事实 | 一间会话一份 |
 
 共同记忆的几个设计点：

@@ -60,6 +60,14 @@ try {
     bridge.收到事件(s, { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } })
     await settle()
   }
+  // 唤醒后的后续轮次：没有新的 user/message 事件，只有她自己的下一轮。
+  const finishTail = async (k) => {
+    const s = { id: 'session-' + k }, turn = ++serial
+    bridge.收到事件(s, { type: 'turn/start', data: { turn } })
+    bridge.收到事件(s, { type: 'assistant/message', data: { turn, message: { role: 'assistant', content: [{ type: 'text', text: '这是同一轮回复的后续。' }] } } })
+    bridge.收到事件(s, { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } })
+    await settle()
+  }
   mount()
   messages.set('456', [row(1)])
   await tick()
@@ -96,6 +104,10 @@ try {
   assert.equal((await privateTool.execute({ min_interval_minutes: 20 })).ok, true)
   await finish('P')
   assert.equal(sent.at(-1).user_id, 123, '私聊来信在夜间仍回复')
+  const tailBefore = sent.length
+  await finishTail('P')
+  assert.equal(sent.length, tailBefore + 1, '唤醒尾巴内的后续轮次属于这次回复，不能被免打扰拦')
+  assert.equal(sent.at(-1).user_id, 123, '后续轮次仍发回触发的私聊')
   await finish('G')
 
   now = Date.parse('2026-11-06T08:00:00+08:00')

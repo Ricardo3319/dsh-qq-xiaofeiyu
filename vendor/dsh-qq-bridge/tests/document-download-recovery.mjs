@@ -40,5 +40,8 @@ try {
     assert.equal(r.result.ok, false);assert.equal(r.calls.length, 0, '不为非过期错误刷新链接')
     assert.ok(r.downloads.length <= 1)
   }
+  const privateUrl = await scenario({ url: 'http://127.0.0.1:3000/secret' })
+  assert.equal(privateUrl.result.ok, false)
+  assert.equal(privateUrl.downloads.length, 0, '本机/内网地址不能由桥进程直接请求')
   console.log('文件链接恢复：群/私聊、四类失效状态、仅刷新一次、并发共享和正文缓存；非失效错误不重试通过')
 } finally { globalThis.fetch = oldFetch }

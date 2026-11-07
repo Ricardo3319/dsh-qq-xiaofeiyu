@@ -57,7 +57,25 @@ class Reader:
         if self.xml_bytes > MAX_XML:
             raise ValueError('Office XML 解压后超过 16MB，请拆分文件')
         data = self.archive.read(info)
-        if b'<!DOCTYPE' in data or b'<!ENTITY' in data:
+        # 不能只在原始字节上查：UTF-16/UTF-32 的 '<!DOCTYPE' 字节序列和 ASCII 不同，
+        # 直接搜会漏掉，而 ElementTree 仍会展开内部实体。先按 BOM 解码再查。
+        if data.startswith(b'\x00\x00\xfe\xff'):
+            text = data[4:].decode('utf-32-be', 'replace')
+        elif data.startswith(b'\xff\xfe\x00\x00'):
+            text = data[4:].decode('utf-32-le', 'replace')
+        elif data.startswith(b'\xef\xbb\xbf'):
+            text = data[3:].decode('utf-8', 'replace')
+        elif data.startswith(b'\xff\xfe'):
+            text = data[2:].decode('utf-16-le', 'replace')
+        elif data.startswith(b'\xfe\xff'):
+            text = data[2:].decode('utf-16-be', 'replace')
+        elif data.startswith(b'\x3c\x00'):  # 无 BOM 的 UTF-16LE：expat 仍会按 '<\0' 认出
+            text = data.decode('utf-16-le', 'replace')
+        elif data.startswith(b'\x00\x3c'):  # 无 BOM 的 UTF-16BE
+            text = data.decode('utf-16-be', 'replace')
+        else:
+            text = data.decode('utf-8', 'replace')
+        if '<!DOCTYPE' in text or '<!ENTITY' in text:
             raise ValueError('Office XML 含不支持的实体声明')
         return ET.fromstring(data)
 
@@ -180,6 +198,6 @@ def main():
 if __name__ == '__main__':
     try:
         result = main()
-    except (zipfile.BadZipFile, KeyError, ET.ParseError, ValueError, RuntimeError, NotImplementedError, RecursionError):
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, ValueError, RuntimeError, NotImplementedError, RecursionError, MemoryError):
         result = {'error': '目前支持标准 DOCX/XLSX；文件结构损坏、加密、缺少内容或超过解析上限，请另存或拆分后发送'}
     print(json.dumps(result, ensure_ascii=False))

@@ -68,4 +68,14 @@ await assert.rejects(()=>解析文档(xlsx({external:true}),'外部.xlsx'),/结�
 await assert.rejects(()=>解析文档(xlsx({firstCells:'<c r="A1" t="s"><v>999</v></c>'}),'损坏.xlsx'),/结构/)
 await assert.rejects(()=>解析文档(Buffer.from('invalid'),'假.docx'),/目前支持/)
 await assert.rejects(()=>解析文档(Buffer.from('old binary'),'旧.doc'),/目前支持/)
+// 实体检查不能只看原始字节：UTF-16 的 '<!DOCTYPE' 字节序列不同，必须解码后再查。
+for (const enc of ['utf-8', 'utf-16', 'utf-16-le', 'utf-16-be']) {
+  const decl = enc === 'utf-8' ? 'utf-8' : 'utf-16'
+  const entity = execFileSync('python3', ['-I','-c', `import io,sys,zipfile
+s='<?xml version="1.0" encoding="${decl}"?><!DOCTYPE r [<!ENTITY a "A">]><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>&a;</w:t></w:r></w:p></w:body></w:document>'
+b=io.BytesIO()
+with zipfile.ZipFile(b,'w') as z: z.writestr('word/document.xml', s.encode('${enc}'))
+sys.stdout.buffer.write(b.getvalue())`])
+  await assert.rejects(()=>解析文档(entity, `实体-${enc}.docx`), /结构/, `${enc} 的实体声明必须拒绝`)
+}
 console.log('Office：真实 ZIP/XML、正文/表格来源、Unicode 续读、工作表关系/稀疏单元格/公式缓存、容量上限和坏文件拒绝通过')

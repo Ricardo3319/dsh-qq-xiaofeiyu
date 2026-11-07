@@ -5,6 +5,8 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// 文件下载也只认公开 HTTP(S) 地址：消息段里的 url 可能是本机/内网，桥进程不能替它去取。
+import { 公开网址 } from './联网.js'
 const 最大字节 = 10 * 1024 * 1024, 最大字符 = 200000, 最多页 = 100
 const 保留时间 = 60 * 60 * 1000
 const 支持 = new Set(['.pdf', '.txt', '.md', '.csv', '.docx', '.xlsx'])
@@ -84,8 +86,8 @@ export async function 解析文档(bytes, name) {
 }
 
 async function 下载(url) {
-  const u = new URL(url)
-  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) throw new Error('QQ 没有提供可下载的 HTTP(S) 文件地址')
+  // 回环、链路本地、内网字面量和带凭据的地址一律不直接取。
+  const u = new URL(公开网址(url))
   const r = await fetch(u.href, { redirect: 'error', signal: AbortSignal.timeout(20000) })
   if (!r.ok) {
     await r.body?.cancel()

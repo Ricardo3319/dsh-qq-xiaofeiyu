@@ -144,6 +144,21 @@ writeFileSync(process.argv[2], 'fake-audio'); });`)
   assert.equal(config.绑定[1].偏好.voice, 'off')
   assert.equal(config.绑定[2].偏好.voice, 'default')
 
+  // 共用会话里主动语音也要跟随这一轮真正回应的聊天，不能固定群优先。
+  reload(); config.绑定[0] = { ...config.绑定[0], 会话: 'session-G' }; save()
+  await receive('123')
+  const tailTurn = ++serial, tailSession = { id: 'session-G' }
+  bridge.收到事件(tailSession, { type: 'turn/start', data: { turn: tailTurn } })
+  bridge.收到事件(tailSession, { type: 'user/message', data: { source: { kind: 'qq' } } })
+  bridge.收到事件(tailSession, { type: 'assistant/message', data: { turn: tailTurn, message: { role: 'assistant', content: [{ type: 'text', text: '短语音回复' }] } } })
+  bridge.收到事件(tailSession, { type: 'turn/end', data: { turn: tailTurn, reason: { kind: 'completed' } } })
+  const isRecord = x => Array.isArray(x.message) && x.message.some(m => m.type === 'record')
+  const recordBefore = sent.filter(isRecord).length
+  for (let i = 0; i < 400 && sent.filter(isRecord).length === recordBefore; i++) await new Promise(r => old.setTimeout(r, 10))
+  const records = sent.filter(isRecord).slice(recordBefore)
+  assert.equal(records.length, 1, '这一轮应主动念一条语音')
+  assert.equal(records[0].user_id, 123, '私聊触发的主动语音不能念到群里')
+
   // 卸载发生在异步装配期间，完成后不得复活提示段。
   let release
   assemblyGate = new Promise(r => { release = r })

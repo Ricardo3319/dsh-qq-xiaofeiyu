@@ -29,6 +29,12 @@ try {
   const privateRows = memory.查({ 来源: '私聊', 哪: '111', 线索: '考研' })
   assert.deepEqual(privateRows.map(x => x.说), ['小明考研的私事'])
   assert.deepEqual(memory.查({ 来源: '私聊', 线索: '考研' }), [])
+  // 自动注入（摘要/挑）也必须按聊天对象隔离，不能只靠显式查。
+  assert.match(memory.摘要('私聊', '火星', '111', 5), /小明考研的私事/)
+  assert.doesNotMatch(memory.摘要('私聊', '火星', '111', 5), /另一个人的/)
+  assert.match(memory.摘要('私聊', '火星', '222', 5), /另一个人的/)
+  assert.doesNotMatch(memory.摘要('私聊', '火星', '222', 5), /小明考研的私事/)
+  assert.doesNotMatch(memory.摘要('私聊', '火星', '', 5), /小明考研的私事|另一个人的/, '不知道对象时不能乱带')
   assert.equal(memory.查({ 来源: '群', 线索: 'onebot' })[0].说, 'NapCat 支持 OneBot')
   assert.equal(memory.查({ 来源: '群', 线索: '考研', 类: '约定' }).length, 1)
   assert.equal(memory.数量(), 8, '只读检索不能改动原有记忆')
