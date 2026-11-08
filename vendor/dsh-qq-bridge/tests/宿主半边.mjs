@@ -290,14 +290,43 @@ if (发了[0]) {
   mkdirSync(join(贴纸根, 'sticker-packs', 'fake'), { recursive: true })
   writeFileSync(join(贴纸根, 'sticker-packs', 'fake', 'a.jpg'),
     Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))
+  writeFileSync(join(贴纸根, 'sticker-packs', 'fake', 'b.jpg'),
+    Buffer.from([0xff, 0xd8, 0xff, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]))
+  writeFileSync(join(贴纸根, 'sticker-packs', 'fake', 'c.jpg'),
+    Buffer.from([0xff, 0xd8, 0xff, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]))
   writeFileSync(join(家, 'qq-sticker-packs.json'), JSON.stringify({
-    生成时间: 'x', 目录: 贴纸根, 图: [{ 相对: 'sticker-packs/fake/a.jpg', 别号: 'p6446', 情绪: '测试' }],
+    生成时间: 'x', 目录: 贴纸根, 图: [
+      { 相对: 'sticker-packs/fake/a.jpg', 别号: 'p6446', 情绪: '测试' },
+      { 相对: 'sticker-packs/fake/b.jpg', 别号: 'p6447', 情绪: '测试' },
+      { 相对: 'sticker-packs/fake/c.jpg', 别号: 'p6448', 情绪: '测试' },
+    ],
   }))
   const 前图库图 = 图数()
   监听[0](会话, 助手消息(132, 1, [块('text', '看看这个\n![x](_stickers/p6446.jpg)')], false))
   监听[0](会话, 转完(132))
   await new Promise((r) => setTimeout(r, 40))
   报('图库别号带 _stickers/ 前缀和 .jpg 也认得', 图数() - 前图库图 === 1, `图 ${图数() - 前图库图}`)
+
+  // [本地补丁 2026-11-07] 生产上它常把别号**单独写成一行文字**（`p7726`），不是 markdown 图：
+  //   QQ 那边收到的就是这串编号。单独成词的别号也要变成图片，正文里不能留编号。
+  const 前裸图 = 图数(), 前裸总 = 发了.length
+  监听[0](会话, 助手消息(135, 1, [块('text', '给你看这个\n\np6447')], false))
+  监听[0](会话, 转完(135))
+  await new Promise((r) => setTimeout(r, 40))
+  const 裸段们 = 发了.slice(前裸总).flatMap((x) => (Array.isArray(x.体 && x.体.message) ? x.体.message : []))
+  报('单独成词的图库别号也发成图片', 图数() - 前裸图 === 1, `图 ${图数() - 前裸图}`)
+  报('单独成词的别号不再当文字发出去',
+    !裸段们.some((s) => s.type === 'text' && /p6447/.test(String((s.data && s.data.text) || ''))), JSON.stringify(裸段们))
+
+  // 它也可能把别号连反引号 / 括号一起抄下来（菜单里就写着 `p编号`）；抠完不能留下空壳。
+  const 前壳图 = 图数(), 前壳总 = 发了.length
+  监听[0](会话, 助手消息(136, 1, [块('text', '看看这个（`p6448`）')], false))
+  监听[0](会话, 转完(136))
+  await new Promise((r) => setTimeout(r, 40))
+  const 壳段们 = 发了.slice(前壳总).flatMap((x) => (Array.isArray(x.体 && x.体.message) ? x.体.message : []))
+  const 壳文字 = 壳段们.filter((s) => s.type === 'text').map((s) => String((s.data && s.data.text) || '')).join('')
+  报('反引号/括号包着的别号也发成图片', 图数() - 前壳图 === 1, `图 ${图数() - 前壳图}`)
+  报('抠完别号不留空引号空括号', !/[`（）()]/.test(壳文字), JSON.stringify(壳段们))
 
   writeFileSync(join(家, 'qq-bridge-config.json'), JSON.stringify(旧配置))
 }
