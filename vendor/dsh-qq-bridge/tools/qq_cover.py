@@ -151,21 +151,21 @@ def 自动移调(人声, 参考):
     return n
 
 
-def 全曲移调(人声, 目标=270.0):
+def 全曲移调(人声, 目标=270.0, 最多=3):
     """整首歌一起移调，保证人声和伴奏还在同一个调上。
 
-    之前只给人声 +12（八度），男声会直接跳到女声高区，听起来像「哈基米」；
-    现在按源人声中位音高选一个整曲移调量（最多 +9 / -6）；人声用 RVC 的
-    --pitch 移，伴奏用 rubberband 移同样的量，保证同调。+9 比 +12 低三个半音，
-    还是女声，但不会那么尖。
+    用户 2026-11-11 定的：**最多 +2~+3**，不刻意拔高——拉太高会破音（+9 实测）。
+    按源人声中位音高选移调量：往上最多 `最多` 个半音，往下最多 6 个半音
+    （太尖的女声源可以降）。人声用 RVC 的 --pitch 移，伴奏用 rubberband 移
+    同样的量，保证同调。
     """
     a = 估计音高(人声)
     if a <= 0:
         print('音高量不出来，整曲移调按 0 处理', file=sys.stderr)
         return 0
     n = int(round(12 * math.log2(目标 / a)))
-    n = max(-6, min(9, n))
-    print('整曲移调：源 %.1fHz / 目标 %.1fHz → %+d 半音（人声+伴奏一起）' % (a, 目标, n), file=sys.stderr)
+    n = max(-6, min(int(最多), n))
+    print('整曲移调：源 %.1fHz / 目标 %.1fHz → %+d 半音（上限 +%d）' % (a, 目标, n, int(最多)), file=sys.stderr)
     return n
 
 
@@ -276,7 +276,7 @@ def 混音(换声后, 伴奏, 出):
 
 def 缓存键(歌曲, 音频, 起始, 时长, 参考, 步数, 移调, 引擎='seedvc', 模型='', 索引='', 索引率=0.0):
     h = hashlib.sha256()
-    h.update(b'cover-v5')  # 算法变了就换版本号，旧缓存自然失效
+    h.update(b'cover-v6')  # 算法变了就换版本号，旧缓存自然失效
     h.update(str(歌曲 or '').encode())
     h.update(str(起始).encode())
     h.update(str(时长).encode())
@@ -373,7 +373,7 @@ def main():
         片段 = 切片(音频, 临时, a.start, a.duration)
         人声, 伴奏 = 分离(片段, 临时, 翻唱家)
         if a.engine == 'rvc':
-            移调 = 全曲移调(人声) if a.rvc_pitch is None \
+            移调 = 全曲移调(人声, 最多=3) if a.rvc_pitch is None \
                 else max(-12, min(12, int(a.rvc_pitch)))
             伴奏 = 移调伴奏(伴奏, 临时, 移调)
             换声后 = 换声_rvc(人声, 临时, RVC家, RVC解释器, RVC脚本,
