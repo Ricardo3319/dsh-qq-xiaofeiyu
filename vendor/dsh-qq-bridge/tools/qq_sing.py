@@ -21,6 +21,7 @@ import argparse
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -244,6 +245,153 @@ def 自动匹配曲目(文本):
             return 名, 条目
     return None, None
 
+
+# ---------- 自由旋律 ----------
+# 用户没点具体的歌、只想听它随便唱时用：按歌词现场编一段五声音阶的调子。
+# 旧版「自由」是一段固定 8 音循环（C D E G A G E D），唱什么词都一个调；
+# 这里按普通话声调轮廓（1 平 / 2 升 / 3 降升 / 4 降）+ 标点停顿 + 乐句收尾来生成。
+风格表 = {
+    '欢快': ('大调', 60, 120),
+    '开心': ('大调', 60, 120),
+    '活泼': ('大调', 60, 120),
+    '温柔': ('大调', 60, 78),
+    '抒情': ('大调', 60, 78),
+    '伤感': ('小调', 57, 72),
+    '难过': ('小调', 57, 72),
+    '搞怪': ('大调', 60, 140),
+    '俏皮': ('大调', 60, 140),
+}
+大调五声 = [0, 2, 4, 7, 9]   # C D E G A
+小调五声 = [0, 3, 5, 7, 10]  # A C D E G
+
+
+def 声调(ch):
+    """汉字 → 普通话声调 1-4；轻声/取不到返回 5。"""
+    from pypinyin import pinyin, Style
+    try:
+        s = str(pinyin(ch, style=Style.TONE3, neutral_tone_with_five=True)[0][0])
+    except Exception:  # noqa: BLE001
+        return 5
+    m = re.search(r'([1-5])$', s)
+    return int(m.group(1)) if m else 5
+
+
+def 分句(文本, 音节们):
+    """按标点把音节切成乐句；只数汉字，标点不占音节。"""
+    句 = []
+    当前 = []
+    i = 0
+    for ch in str(文本 or ''):
+        if '一' <= ch <= '鿿':
+            # 取音节可能跳过个别生僻字，按字对齐，别把后面的字错位
+            if i < len(音节们) and 音节们[i][0] == ch:
+                当前.append(音节们[i])
+                i += 1
+        elif ch in '，。！？；、,.!?;…':
+            if 当前:
+                句.append(当前)
+                当前 = []
+    if 当前:
+        句.append(当前)
+    if i < len(音节们):
+        if not 句:
+            句.append([])
+        句[-1].extend(音节们[i:])
+    return 句
+
+
+def 自由旋律(文本, 音节们, 风格='', 种子=0, 音符数=None):
+    """按歌词现场编一段五声音阶旋律。
+
+    返回 (名字, [[(音名, 拍数)], ...], bpm)，形状跟 配旋律 一样。
+    种子为 0 时每次不同；给了种子可复现（测试/缓存用）。
+    """
+    from librosa import midi_to_note
+    实际种子 = int(种子) if int(种子 or 0) else time.time_ns()
+    rng = random.Random(实际种子)
+    名 = str(风格 or '').strip()
+    调式, 根音, bpm = 风格表.get(名, ('大调', 60, 100))
+    # 没写风格时从歌词里猜一个：感叹号多 → 欢快，省略号 → 温柔
+    if not 名:
+        if str(文本).count('！') + str(文本).count('!') >= 2:
+            调式, 根音, bpm = '大调', 60, 120
+        elif '…' in str(文本) or '...' in str(文本):
+            调式, 根音, bpm = '大调', 60, 78
+    音阶 = 大调五声 if 调式 == '大调' else 小调五声
+    句们 = 分句(文本, 音节们)
+    if not 句们:
+        raise SystemExit('歌词里没有可唱的中文字')
+    # 太长又没有标点的句子，按 6 个音节切一下，让乐句有落点（不插休止符）
+    切 = []
+    for 句 in 句们:
+        while len(句) > 6:
+            切.append(句[:6])
+            句 = 句[6:]
+        if 句:
+            切.append(句)
+    句们 = 切
+    高 = len(音阶) + 2  # 七度以内，约 C4–C5 / A3–A4
+    主音位置 = [0, 2, 4]  # 主音 / 三度 / 五度，乐句收在这里
+    # 乐句轮廓用模板，避免随机游走卡在同几个音上（实测会有整句全 C4 的念经）
+    轮廓模板 = {
+        '拱形': [0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
+        '波浪': [0, 2, 1, 3, 2, 4, 3, 1, 2, 0],
+        '上行': [0, 1, 2, 3, 4, 5, 6, 5, 4, 3],
+        '下行': [5, 4, 3, 2, 1, 2, 3, 2, 1, 0],
+        '俏皮': [0, 2, 4, 3, 1, 3, 2, 4, 1, 0],
+    }
+    模板 = 轮廓模板[rng.choice(list(轮廓模板))]
+    节奏表 = {}
+    配 = []
+    for 句号, 句 in enumerate(句们):
+        n = len(句)
+        if n <= 0:
+            continue
+        if n == 1:
+            位 = [0]
+        else:
+            # 把模板等距采样到这一句的音节数上；第二句整体抬一点，像 A A'
+            采样 = [模板[round(i * (len(模板) - 1) / (n - 1))] for i in range(n)]
+            中 = rng.choice([3, 4]) + (1 if 句号 % 2 else 0)
+            位 = [max(0, min(高, 中 + (t - 3))) for t in 采样]
+            # 声调只做小幅修正：升调往上、降调往下，别把轮廓全抹平
+            for i, (ch, _p) in enumerate(句):
+                t = 声调(ch)
+                if t == 2 and rng.random() < 0.5:
+                    位[i] = min(高, 位[i] + 1)
+                elif t in (3, 4) and rng.random() < 0.5:
+                    位[i] = max(0, 位[i] - 1)
+        # 句尾收在主音/三度/五度里离上一个音最近的那个，避免大跳
+        if n >= 2:
+            位[-1] = min(主音位置, key=lambda x: abs(x - 位[-2]))
+        else:
+            位[-1] = 0
+        # 节奏：句尾拖长；句中长短交替，别再「一个字一拍」念经
+        节奏 = 节奏表.get(n)
+        if 节奏 is None:
+            节奏 = []
+            for i in range(n):
+                if i == n - 1:
+                    节奏.append(2.0)
+                elif i == 0 and rng.random() < 0.4:
+                    节奏.append(0.5)
+                else:
+                    节奏.append(rng.choice([0.5, 0.5, 1.0, 1.0, 1.5]))
+            节奏表[n] = 节奏
+        配.extend([[(midi_to_note(根音 + 12 * (d // len(音阶)) + 音阶[d % len(音阶)], unicode=False), b)]
+                   for d, b in zip(位, 节奏)])
+    if not 配:
+        raise SystemExit('自由旋律没生成出音符')
+    # 音素分组数可能和音节数差一两个，按实际音符数截/循环
+    if 音符数:
+        if len(配) >= 音符数:
+            配 = 配[:音符数]
+        else:
+            配 = [配[i % len(配)] for i in range(音符数)]
+    print('自由旋律：风格 %s，BPM %s，seed %s' % (名 or '默认', bpm, 实际种子), file=sys.stderr)
+    return '自由', 配, bpm
+
+
 # 跟 diffsinger_utau 的 Phome 用同一套判定（见 package 里的 utils.py）
 拼音声母 = set(['b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h', 'j', 'q', 'x',
               'zh', 'ch', 'sh', 'r', 'z', 'c', 's', 'y', 'w'])
@@ -389,7 +537,7 @@ def 配旋律(音节数, 名字, 自定义, 简谱文本):
     return 名字, 配, 曲bpm
 
 
-def 生成_ds(文本, 旋律名, 自定义音符, 简谱文本, bpm, 字典):
+def 生成_ds(文本, 旋律名, 自定义音符, 简谱文本, bpm, 字典, 风格='', 种子=0):
     音节们 = 取音节(文本)
     if not 音节们:
         raise SystemExit('歌词里没有可唱的中文字')
@@ -404,7 +552,11 @@ def 生成_ds(文本, 旋律名, 自定义音符, 简谱文本, bpm, 字典):
         自动名, 自动条目 = 自动匹配曲目(文本)
         if 自动条目:
             旋律名 = 自动名
-    名字, 配, 曲bpm = 配旋律(音符数, 旋律名, 自定义音符, 简谱文本)
+    # 「自由」不再套固定 8 音循环，按歌词现场编一段新调子
+    if not 简谱文本 and not 自定义音符 and 旋律名 == '自由':
+        名字, 配, 曲bpm = 自由旋律(文本, 音节们, 风格, 种子, 音符数)
+    else:
+        名字, 配, 曲bpm = 配旋律(音符数, 旋律名, 自定义音符, 简谱文本)
     if len(配) != 音符数:
         raise SystemExit('音素分组数 %d 和音符数 %d 对不上' % (len(分组), len(配) + 2))
     实际bpm = float(bpm or 曲bpm or 100)
@@ -543,6 +695,10 @@ def main() -> int:
     ap.add_argument('--notes', default='', help='自定义音名，空格分隔，例如 "C4 D4 E4 G4"')
     ap.add_argument('--bpm', type=float, default=0,
                     help='速度；0 = 用曲目自带的速度（没有就 100）')
+    ap.add_argument('--style', default='',
+                    help='自由旋律的风格：欢快 / 温柔 / 伤感 / 搞怪')
+    ap.add_argument('--seed', type=int, default=0,
+                    help='自由旋律随机种子；0 = 每次不同')
     ap.add_argument('--speaker', default=None)
     ap.add_argument('--key-shift', type=int, default=0)
     ap.add_argument('--acoustic-steps', type=int, default=20)
@@ -564,7 +720,8 @@ def main() -> int:
         sys.stderr.write('歌词过长，截到 60 字\n')
 
     字典 = 读字典()
-    ds, 名字, 实际bpm = 生成_ds(文本, a.song, a.notes, a.notation, a.bpm, 字典)
+    ds, 名字, 实际bpm = 生成_ds(文本, a.song, a.notes, a.notation, a.bpm, 字典,
+                              a.style, a.seed)
     print('旋律：%s（BPM %s），歌词：%s' % (名字, 实际bpm, 文本), file=sys.stderr)
     if a.save_song:
         谱文 = a.notation or a.notes

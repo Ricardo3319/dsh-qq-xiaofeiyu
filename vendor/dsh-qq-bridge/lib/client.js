@@ -403,7 +403,7 @@ window.__ModuleLoader__.load({
                 h('div', { style: S.dim }, '保存后生效。群设置作用于全群；多个聊天共用一间会话时，不混用称呼/长短提示，语音限制仍按聊天生效。')),
               h('details', { style: { margin: '0 0 10px', padding: '6px 8px', background: 'rgba(127,127,127,.06)' } },
                 h('summary', { style: { cursor: 'pointer' } }, '免打扰与主动互动'),
-                h('div', { style: S.dim }, '只限制主动推送和未点名的群聊插话；私聊来信、@、引用和叫名字仍按原流程回应。略过的闲聊不会稍后补发。'),
+                h('div', { style: S.dim }, '间隔只限制主动推送；私聊来信、@、引用和叫名字照常回应。免打扰时段内未点名的群聊不进来，其余时间群聊照常接收，接不接由它自己判断。'),
                 ...[['quiet_start', '免打扰开始'], ['quiet_end', '免打扰结束']].map(([k, label]) =>
                   行(label, h('input', { type: 'time', style: S.inp, value: x.互动?.[k] ?? '00:00',
                     onChange: (e) => 改互动(i, k, e.target.value) }), '支持跨午夜；开始与结束相同表示不设免打扰。')),

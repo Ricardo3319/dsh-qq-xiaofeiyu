@@ -117,16 +117,20 @@ try {
   await tick()
   assert.equal(incoming.length, before + 1, '恢复时不重放被略过的消息')
   await finish('G')
-  const last = JSON.parse(readFileSync(state)).主动上次['群:456']
-  assert.equal(last, now)
+  assert.equal(JSON.parse(readFileSync(state)).主动上次?.['群:456'], undefined,
+    '回复群聊不算主动互动，不该记冷却')
   messages.set('456', [row(5)])
   await tick()
-  assert.equal(incoming.length, before + 1, '工作日冷却期间不接闲聊')
+  assert.equal(incoming.length, before + 2, '回复之后下一句闲聊照常进来')
   messages.set('456', [row(6, true)])
   await tick()
-  assert.equal(incoming.length, before + 2)
+  assert.equal(incoming.length, before + 3)
   await finish('G')
-  assert.equal(JSON.parse(readFileSync(state)).主动上次['群:456'], last, '明确回复不重新计算主动间隔')
+  assert.equal(JSON.parse(readFileSync(state)).主动上次?.['群:456'], undefined, '明确回复也不记主动间隔')
+  // 主动推送仍然受间隔限制
+  assert.equal((await bridge.发到QQ(config, '主动说一句', [], 'session-G', '', true)).length, 1)
+  const last = JSON.parse(readFileSync(state)).主动上次['群:456']
+  assert.equal(last, now)
   const count = sent.length
   await finish('G', 'speak-up')
   assert.equal(sent.length, count)
